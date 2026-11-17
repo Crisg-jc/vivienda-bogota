@@ -158,14 +158,14 @@ async function estimarAhora() {
     error.textContent = "Escriba un área entre 15 y 1.000 m²."; error.hidden = false; return;
   }
   error.hidden = true;
-  const boton = $("#boton-estimar"); boton.setAttribute("aria-busy", "true");
+  const form = $("#formulario"); form.classList.add("calculando");
   const id = ++ultimaPeticion;
   try {
     const r = await api("/api/estimar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(datos) });
     if (id === ultimaPeticion) pintarResultado(r, datos);
   } catch (e) {
     error.textContent = `No se pudo estimar: ${e.message}`; error.hidden = false;
-  } finally { boton.removeAttribute("aria-busy"); }
+  } finally { if (id === ultimaPeticion) form.classList.remove("calculando"); }
 }
 
 // ---------------------------------------------------------------- resultado
@@ -174,7 +174,11 @@ let primeraVez = true;
 function pintarResultado(r, datos) {
   $("#resultado-vacio").hidden = true;
   $("#resultado-lleno").hidden = false;
+  $("#detalle").hidden = false;
+  $("#resultado").setAttribute("aria-busy", "false");
   $("#r-precio").textContent = millones(r.precio);
+  $("#pf-precio").textContent = millones(r.precio);
+  hayResultado = true; actualizarFlotante();
   $("#r-rango").textContent = `Lo más probable es que un aviso así pida entre ${corto(r.minimo)} y ${corto(r.maximo)}.`;
   $("#r-m2").textContent = m2(r.precio_m2);
   const c = r.contexto;
@@ -269,7 +273,7 @@ function chipEstrato(e) {
 
 function pintarSimilares(lista) {
   $("#r-similares").innerHTML = lista.map((s) => `<tr>
-    <td>${corto(s.precio)}</td><td>${area(s.area_m2)}</td><td>${chipEstrato(s.estrato)}</td>
+    <td>${corto(s.precio)}</td><td>${m2(s.precio_m2)}</td><td>${area(s.area_m2)}</td><td>${chipEstrato(s.estrato)}</td>
     <td>${s.localidad ?? "—"}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
 }
 
@@ -422,12 +426,17 @@ async function cargarAvisos() {
       <td>${a.habitaciones ?? "—"}</td><td>${a.banos ?? "—"}</td><td>${chipEstrato(a.estrato)}</td>
       <td>${a.localidad ?? "—"}</td><td>${a.barrio ?? "—"}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
   $("#a-pagina").textContent = `Página ${r.pagina} de ${paginas}`;
+  $("#a-limpiar").hidden = !["localidad", "estrato", "precio_max", "area_min"].some((k) => f.get(k));
   $("#a-anterior").disabled = r.pagina <= 1;
   $("#a-siguiente").disabled = r.pagina >= paginas;
 }
 $("#filtros").addEventListener("change", () => { paginaActual = 1; cargarAvisos(); });
 $("#a-anterior").addEventListener("click", () => { paginaActual--; cargarAvisos(); });
 $("#a-siguiente").addEventListener("click", () => { paginaActual++; cargarAvisos(); });
+$("#a-limpiar").addEventListener("click", () => {
+  const f = $("#filtros"); const orden = f.orden.value;
+  f.reset(); f.orden.value = orden; paginaActual = 1; cargarAvisos();
+});
 
 // ---------------------------------------------------------------- modelo
 async function cargarModelo() {
@@ -451,12 +460,31 @@ async function cargarModelo() {
   const filas = [
     ["Error promedio (MAE)", corto(p.mae)],
     ["Error relativo", `${fmt1.format(p.error_relativo * 100)} %`],
-    ["Meta del proyecto", "15 %"],
+    ["Meta del proyecto", "15 %", "meta"],
     [`Cobertura del rango (meta ${Math.round(m.rango.nivel * 100)} %)`, `${Math.round((p.cobertura_rango ?? 0) * 100)} %`],
   ];
   if (elegido !== "Línea base" && base) filas.splice(2, 0, ["Línea base en la misma prueba", corto(base.mae)]);
-  $("#mo-prueba").innerHTML = filas.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  $("#mo-prueba").innerHTML = filas.map(([k, v, c]) => `<div${c ? ` class="${c}"` : ""}><dt>${k}</dt><dd>${v}</dd></div>`).join("");
 }
+
+// ---------------------------------------------------------------- navegación y precio flotante
+// El menú marca la sección que se está leyendo.
+const enlacesNav = [...document.querySelectorAll(".barra__nav a")];
+const espia = new IntersectionObserver((entradas) => {
+  for (const e of entradas) {
+    if (!e.isIntersecting) continue;
+    for (const a of enlacesNav) a.setAttribute("aria-current", String(a.hash === `#${e.target.id}`));
+  }
+}, { rootMargin: "-40% 0px -55% 0px" });
+for (const id of ["estimar", "mercado", "avisos", "modelo"]) espia.observe(document.getElementById(id));
+
+// En el celular, mientras se ajusta el formulario, el precio queda visible abajo.
+let hayResultado = false, formularioVisible = false, resumenVisible = false;
+function actualizarFlotante() {
+  $("#precio-flotante").hidden = !(hayResultado && formularioVisible && !resumenVisible);
+}
+new IntersectionObserver(([e]) => { formularioVisible = e.isIntersecting; actualizarFlotante(); }).observe($("#formulario"));
+new IntersectionObserver(([e]) => { resumenVisible = e.isIntersecting; actualizarFlotante(); }, { threshold: 0.35 }).observe($("#resultado"));
 
 // ---------------------------------------------------------------- arranque
 // La cinta vacía del estado inicial

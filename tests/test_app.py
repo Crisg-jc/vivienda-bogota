@@ -86,7 +86,7 @@ def test_mercado_y_avisos(cliente):
 def test_interfaz_se_sirve(cliente):
     c, _ = cliente
     r = c.get("/")
-    assert r.status_code == 200 and "Estimar precio" in r.text
+    assert r.status_code == 200 and "Precio de publicación estimado" in r.text
     assert c.get("/static/app.js").status_code == 200
 
 
