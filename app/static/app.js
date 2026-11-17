@@ -280,6 +280,10 @@ async function cargarMercado() {
   $("#m-resumen").innerHTML = `La mitad de los ${fmt.format(r.avisos)} avisos pide menos de <strong>${millones(r.mediana_precio)}</strong>.
     El metro cuadrado mediano está en <strong>${m2(r.mediana_m2)}</strong> y el área mediana es de <strong>${area(r.mediana_area)}</strong>.`;
   pintarCajas(m.estratos);
+  if (m.estratos_omitidos.length) {
+    const lista = m.estratos_omitidos.map((o) => `${o.estrato} (${o.n})`).join(", ");
+    $("#g-cajas").insertAdjacentHTML("afterend", `<p class="como-leer">No se dibuja caja para los estratos con menos de 3 avisos: ${lista}. Entre paréntesis, cuántos avisos hay.</p>`);
+  }
   pintarDispersion(m.dispersion);
   let ultimoAncho = innerWidth, espera;
   addEventListener("resize", () => {

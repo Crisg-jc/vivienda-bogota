@@ -140,8 +140,9 @@ def caja(s: pd.Series) -> dict:
 @app.get("/api/mercado")
 def api_mercado():
     df = ESTADO["df"]
-    estratos = [{"estrato": int(k), **caja(g["precio_m2"])}
-                for k, g in df.dropna(subset=["estrato"]).groupby("estrato") if len(g) >= 3]
+    grupos = df.dropna(subset=["estrato"]).groupby("estrato")
+    estratos = [{"estrato": int(k), **caja(g["precio_m2"])} for k, g in grupos if len(g) >= 3]
+    omitidos = [{"estrato": int(k), "n": int(len(g))} for k, g in grupos if len(g) < 3]
     loc = (df.dropna(subset=["localidad"]).groupby("localidad")
            .agg(n=("precio", "size"), mediana_m2=("precio_m2", "median"), mediana_precio=("precio", "median"))
            .reset_index().sort_values("mediana_m2", ascending=False))
@@ -151,7 +152,7 @@ def api_mercado():
     geo = muestra.dropna(subset=["latitud", "longitud"])
     mapa = [{"lat": float(r.latitud), "lon": float(r.longitud), "m2": float(r.precio_m2), "precio": float(r.precio),
              "area": float(r.area_m2), "localidad": limpio(r.localidad)} for r in geo.itertuples()]
-    return {"estratos": estratos, "localidades": loc.to_dict("records"), "dispersion": dispersion, "mapa": mapa,
+    return {"estratos": estratos, "estratos_omitidos": omitidos, "localidades": loc.to_dict("records"), "dispersion": dispersion, "mapa": mapa,
             "resumen": {"avisos": len(df), "mediana_precio": float(df["precio"].median()),
                         "mediana_m2": float(df["precio_m2"].median()), "mediana_area": float(df["area_m2"].median()),
                         "con_coordenadas": int(len(df.dropna(subset=["latitud", "longitud"])))}}
