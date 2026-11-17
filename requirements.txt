@@ -1,0 +1,25 @@
+# Recolección y limpieza
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+pandas>=2.1
+PyYAML>=6.0
+python-dotenv>=1.0
+
+# Modelo
+numpy>=1.26
+scikit-learn>=1.4
+joblib>=1.3
+
+# Aplicación web
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# Pruebas
+pytest>=8.0
+httpx>=0.27
+
+# Opcional: registro de experimentos. Si está instalado, modelo.entrenar lo usa.
+# mlflow>=2.12

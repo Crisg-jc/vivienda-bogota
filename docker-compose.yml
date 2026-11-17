@@ -1,0 +1,28 @@
+# Uso:
+#   docker compose up --build                        -> solo la aplicación, en http://localhost:8000
+#   docker compose --profile recoleccion up -d db    -> además, PostgreSQL para el recolector
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./datos:/app/datos            # aquí van los dataset_vN.csv que produce la limpieza
+      - ./artefactos:/app/artefactos  # modelo entrenado y métricas
+    environment:
+      VIVIENDA_DATASET: ${VIVIENDA_DATASET:-}
+
+  db:
+    profiles: ["recoleccion"]
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vivienda}
+      POSTGRES_USER: ${POSTGRES_USER:-vivienda}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

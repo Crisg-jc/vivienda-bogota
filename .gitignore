@@ -1,0 +1,24 @@
+# Entorno y secretos
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Datos: los avisos recolectados NO se suben al repositorio (ver README, "Datos y privacidad")
+datos/*
+!datos/barrios_localidad.csv
+!datos/.gitkeep
+carga_manual/*
+!carga_manual/plantilla_captura.csv
+
+# Productos que se regeneran
+artefactos/*
+!artefactos/.gitkeep
+mlruns/
+*.db
+
+.DS_Store
+.vscode/
+.idea/

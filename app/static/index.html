@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Precio de apartamentos en Bogotá</title>
+  <meta name="description" content="Estime el precio de publicación de un apartamento en venta en Bogotá y compárelo con avisos reales.">
+  <link rel="icon" href="/static/icono.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/vendor/fuentes/fuentes.css">
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/static/estilos.css">
+</head>
+<body>
+  <a class="saltar" href="#estimar">Ir al estimador</a>
+
+  <header class="barra">
+    <div class="barra__marca">
+      <svg class="marca" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="6" width="13" height="6" rx="1"/><rect x="17" y="6" width="13" height="6" rx="1"/><rect x="2" y="14" width="6" height="6" rx="1"/><rect x="10" y="14" width="13" height="6" rx="1"/><rect x="25" y="14" width="5" height="6" rx="1"/><rect x="2" y="22" width="13" height="6" rx="1"/><rect x="17" y="22" width="13" height="6" rx="1"/></svg>
+      <span>Vivienda Bogotá</span>
+    </div>
+    <nav class="barra__nav" aria-label="Secciones">
+      <a href="#estimar">Estimar</a>
+      <a href="#mercado">Mercado</a>
+      <a href="#avisos">Avisos</a>
+      <a href="#modelo">Modelo</a>
+    </nav>
+    <p class="barra__datos" id="insignia-datos">Cargando datos…</p>
+  </header>
+
+  <div class="aviso-demo" id="aviso-demo" hidden>
+    <p><strong>Datos de demostración.</strong> Lo que ve aquí sale de avisos sintéticos creados por un programa, solo para probar la aplicación. No describe el mercado de Bogotá. Para usar datos reales, siga la sección "Recolectar datos reales" del README.</p>
+  </div>
+
+  <main>
+    <!-- ============================================================ ESTIMAR -->
+    <section class="estimar" id="estimar" aria-labelledby="t-estimar">
+      <div class="estimar__intro">
+        <h1 id="t-estimar">¿Cuánto se pide por un apartamento como este en&nbsp;Bogotá?</h1>
+        <p class="entrada">Describa el apartamento y vea un precio de referencia junto con avisos parecidos. Es el precio al que se publican apartamentos similares, no un avalúo.</p>
+      </div>
+
+      <form class="formulario" id="formulario" novalidate>
+        <div class="campo campo--ancho">
+          <label for="area">Área construida</label>
+          <div class="con-sufijo">
+            <input id="area" name="area_m2" type="number" inputmode="decimal" min="15" max="1000" step="1" value="70" required>
+            <span>m²</span>
+          </div>
+          <input class="deslizador" id="area-rango" type="range" min="25" max="300" step="1" value="70" aria-label="Área construida (deslizador)">
+        </div>
+
+        <fieldset class="campo campo--ancho">
+          <legend>Estrato</legend>
+          <div class="segmentos" id="estratos" role="radiogroup">
+            <!-- 1 a 6, se generan en app.js -->
+          </div>
+        </fieldset>
+
+        <div class="campo campo--ancho">
+          <label for="localidad">Localidad</label>
+          <select id="localidad" name="localidad">
+            <option value="">No sé o prefiero no decir</option>
+          </select>
+        </div>
+
+        <div class="contadores">
+          <div class="campo contador" data-nombre="habitaciones" data-min="0" data-max="8" data-valor="3">
+            <span class="contador__etiqueta" id="l-hab">Habitaciones</span>
+          </div>
+          <div class="campo contador" data-nombre="banos" data-min="0" data-max="8" data-valor="2">
+            <span class="contador__etiqueta" id="l-ban">Baños</span>
+          </div>
+          <div class="campo contador" data-nombre="parqueaderos" data-min="0" data-max="6" data-valor="1">
+            <span class="contador__etiqueta" id="l-par">Parqueaderos</span>
+          </div>
+        </div>
+
+        <div class="campo">
+          <label for="antiguedad">Antigüedad</label>
+          <div class="con-sufijo">
+            <input id="antiguedad" name="antiguedad" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="Sin dato">
+            <span>años</span>
+          </div>
+        </div>
+
+        <button class="boton" type="submit" id="boton-estimar">Estimar precio</button>
+        <p class="error" id="error-form" role="alert" hidden></p>
+      </form>
+
+      <div class="resultado" id="resultado" aria-live="polite">
+        <div class="resultado__vacio" id="resultado-vacio">
+          <p>El precio estimado aparecerá aquí, ubicado entre los avisos más parecidos.</p>
+          <svg class="cinta cinta--fantasma" viewBox="0 0 600 70" aria-hidden="true"></svg>
+        </div>
+
+        <div class="resultado__lleno" id="resultado-lleno" hidden>
+          <p class="resultado__rotulo">Precio de publicación estimado</p>
+          <p class="precio" id="r-precio">—</p>
+          <p class="rango" id="r-rango"></p>
+
+          <figure class="cinta-fig">
+            <svg class="cinta" id="cinta" viewBox="0 0 600 120" role="img" aria-labelledby="cinta-desc"></svg>
+            <figcaption id="cinta-desc">La franja es el rango probable; los círculos son los avisos parecidos que aparecen abajo.</figcaption>
+          </figure>
+
+          <div class="metro">
+            <p><span class="metro__cifra" id="r-m2"></span> por metro cuadrado</p>
+            <p class="metro__contexto" id="r-contexto"></p>
+          </div>
+
+          <ul class="advertencias" id="r-advertencias"></ul>
+
+          <div class="efectos">
+            <h2>Qué mueve este precio</h2>
+            <p class="como-leer" id="r-efectos-guia"></p>
+            <div id="r-efectos"></div>
+          </div>
+
+          <div class="parecidos">
+            <h2>Avisos parecidos</h2>
+            <div class="desliza">
+              <table class="tabla tabla--compacta">
+                <thead><tr><th>Precio</th><th>Área</th><th>Estrato</th><th>Localidad</th><th><span class="sr">Enlace</span></th></tr></thead>
+                <tbody id="r-similares"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ MERCADO -->
+    <section class="seccion" id="mercado" aria-labelledby="t-mercado">
+      <h2 class="seccion__titulo" id="t-mercado">Lo que muestran los avisos</h2>
+      <p class="seccion__entrada" id="m-resumen"></p>
+
+      <div class="graficos">
+        <figure class="grafico grafico--ancho">
+          <h3>Precio del metro cuadrado según estrato</h3>
+          <p class="como-leer">Cada caja reúne la mitad central de los avisos de un estrato; la raya gruesa es la mediana y los bigotes llegan hasta los valores habituales. Los puntos sueltos son avisos individuales.</p>
+          <svg id="g-cajas" class="lienzo" role="img" aria-label="Diagrama de caja del precio por metro cuadrado según estrato"></svg>
+        </figure>
+
+        <figure class="grafico">
+          <h3>Precio según área y estrato</h3>
+          <p class="como-leer">Cada punto es un aviso. El color indica el estrato: si los puntos oscuros quedan por encima de los claros, el estrato sube el precio aunque el área sea la misma.</p>
+          <svg id="g-dispersion" class="lienzo" role="img" aria-label="Precio frente a área por estrato"></svg>
+          <div class="leyenda" id="leyenda-estratos"></div>
+        </figure>
+
+        <figure class="grafico">
+          <h3>Metro cuadrado mediano por localidad</h3>
+          <p class="como-leer">Ordenado de mayor a menor. Entre paréntesis, cuántos avisos hay: con menos de 10 la cifra es poco estable.</p>
+          <div id="g-localidades" class="barras"></div>
+        </figure>
+
+        <figure class="grafico grafico--ancho">
+          <h3>Dónde están los avisos</h3>
+          <p class="como-leer">Cada círculo es un aviso con coordenadas; el color va del verde claro (metro cuadrado más barato) al ladrillo (más caro). Los vacíos del mapa son zonas sin avisos en los datos, no zonas sin vivienda.</p>
+          <div id="mapa" class="mapa" role="region" aria-label="Mapa de avisos"></div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ============================================================ AVISOS -->
+    <section class="seccion" id="avisos" aria-labelledby="t-avisos">
+      <h2 class="seccion__titulo" id="t-avisos">Explorar los avisos</h2>
+      <form class="filtros" id="filtros">
+        <label>Localidad
+          <select name="localidad" id="f-localidad"><option value="">Todas</option></select>
+        </label>
+        <label>Estrato
+          <select name="estrato"><option value="">Todos</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+        </label>
+        <label>Precio máximo
+          <select name="precio_max"><option value="">Sin límite</option><option value="300000000">$300 millones</option><option value="500000000">$500 millones</option><option value="800000000">$800 millones</option><option value="1200000000">$1.200 millones</option></select>
+        </label>
+        <label>Área mínima
+          <select name="area_min"><option value="">Cualquiera</option><option value="40">40 m²</option><option value="60">60 m²</option><option value="80">80 m²</option><option value="120">120 m²</option></select>
+        </label>
+        <label>Ordenar por
+          <select name="orden"><option value="precio">Precio, de menor a mayor</option><option value="-precio">Precio, de mayor a menor</option><option value="precio_m2">Metro cuadrado, de menor a mayor</option><option value="-precio_m2">Metro cuadrado, de mayor a menor</option><option value="-area_m2">Área, de mayor a menor</option></select>
+        </label>
+      </form>
+      <p class="conteo" id="a-conteo" aria-live="polite"></p>
+      <div class="tabla-marco">
+        <table class="tabla">
+          <thead><tr><th>Precio</th><th>Metro cuadrado</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th><span class="sr">Enlace</span></th></tr></thead>
+          <tbody id="a-filas"></tbody>
+        </table>
+      </div>
+      <div class="paginas">
+        <button class="boton boton--sutil" id="a-anterior" type="button">Anteriores</button>
+        <span id="a-pagina"></span>
+        <button class="boton boton--sutil" id="a-siguiente" type="button">Siguientes</button>
+      </div>
+    </section>
+
+    <!-- ============================================================ MODELO -->
+    <section class="seccion" id="modelo" aria-labelledby="t-modelo">
+      <h2 class="seccion__titulo" id="t-modelo">Cómo se calcula y qué tan bien funciona</h2>
+      <div class="modelo">
+        <div class="modelo__texto" id="mo-texto"></div>
+        <div>
+          <h3>Comparación con validación cruzada</h3>
+          <p class="como-leer">MAE es el error promedio en millones de pesos; el error relativo lo divide por el precio mediano. Gana el de menor MAE, siempre que supere a la línea base.</p>
+          <div class="desliza">
+            <table class="tabla">
+              <thead><tr><th>Modelo</th><th>MAE</th><th>Error relativo</th><th>R²</th></tr></thead>
+              <tbody id="mo-cv"></tbody>
+            </table>
+          </div>
+          <h3>Prueba final</h3>
+          <p class="como-leer">Medido una sola vez con avisos que el modelo no vio al entrenar.</p>
+          <dl class="prueba" id="mo-prueba"></dl>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="pie">
+    <p>Proyecto de Electiva II, Universidad ECCI. Diego Alejandro Galicia Forero, Cristian Javier Gómez Castañeda y Camila Andrea Vanegas Ducuara.</p>
+    <p>Las estimaciones son referencias del precio de publicación y no reemplazan un avalúo comercial. Código bajo licencia MIT. <a href="/docs">Documentación de la API</a>.</p>
+  </footer>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+
+  <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+  <script src="/static/app.js" type="module"></script>
+</body>
+</html>

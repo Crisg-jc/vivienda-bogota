@@ -1,0 +1,46 @@
+# Configuración de la recolección. Léase el README (sección "Recolectar datos reales") antes de cambiarla.
+#
+# Ningún portal se recolecta mientras terminos_revisados sea false. Una persona del equipo debe leer
+# los términos de uso del portal y, si no prohíben la extracción automatizada, anotar su nombre
+# y la fecha en revisado_por y fecha_revision, y cambiar terminos_revisados a true.
+
+general:
+  # Ponga un correo real de contacto: el portal debe poder saber quién hace las solicitudes.
+  user_agent: "MVP-Vivienda-Bogota/1.0 (proyecto academico; contacto: CAMBIAR@correo.com)"
+  pausa_min_s: 4                    # pausa aleatoria entre solicitudes (segundos)
+  pausa_max_s: 8
+  timeout_s: 30
+  reintentos: 2                     # solo para errores 5xx o de red; 403/429 detienen el programa
+  max_paginas_listado: 60
+  max_paginas_vacias_seguidas: 5
+  max_avisos_por_ejecucion: 300
+
+portales:
+  fincaraiz:
+    habilitado: true
+    terminos_revisados: false
+    revisado_por: ""
+    fecha_revision: ""
+    base: "https://www.fincaraiz.com.co"
+    listado_pagina_1: "https://www.fincaraiz.com.co/venta/apartamentos/bogota/bogota-dc"
+    listado_pagina_n: "https://www.fincaraiz.com.co/venta/apartamentos/bogota/bogota-dc/pagina{pagina}"
+    # Solo avisos individuales; los de /proyectos-vivienda/ muestran un precio "desde" y se excluyen.
+    patron_detalle: '^https://www\.fincaraiz\.com\.co/apartamento-en-venta-en-[a-z0-9-]+-bogota/\d+/?$'
+    patron_barrio_url: 'apartamento-en-venta-en-([a-z0-9-]+?)-bogota/'
+
+  ciencuadras:
+    habilitado: true
+    terminos_revisados: false
+    revisado_por: ""
+    fecha_revision: ""
+    base: "https://www.ciencuadras.com"
+    listado_pagina_1: "https://www.ciencuadras.com/venta/bogota/apartamento"
+    # SIN VERIFICAR: confirme en el navegador la URL de la página 2 antes de usarla.
+    listado_pagina_n: "https://www.ciencuadras.com/venta/bogota/apartamento?page={pagina}"
+    patron_detalle: '^https://www\.ciencuadras\.com/inmueble/apartamento-en-venta-en-[a-z0-9-]+/?$'
+
+  metrocuadrado:
+    habilitado: false
+    motivo: "Su robots.txt prohíbe /detail/ y /metrocuadrado-results/ (revisado el 4 de octubre de 2026)."
+    terminos_revisados: false
+    base: "https://www.metrocuadrado.com"

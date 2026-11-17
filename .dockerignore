@@ -1,0 +1,9 @@
+.git
+.venv
+venv
+__pycache__
+.pytest_cache
+.env
+mlruns
+artefactos/*.joblib
+artefactos/*.json
