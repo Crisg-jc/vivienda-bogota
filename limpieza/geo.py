@@ -59,7 +59,7 @@ def _conversor(datos: dict):
         from pyproj import Transformer
     except ImportError:
         raise SystemExit(f"El mapa está en el sistema EPSG:{epsg} (metros). Instale el conversor con:\n"
-                         "  python -m pip install pyproj\ny vuelva a ejecutar el comando.")
+                         "  python -m pip install pyproj\ny vuelva a ejecutar el comando.") from None
     t = Transformer.from_crs(int(epsg), 4326, always_xy=True)
     return lambda x, y: list(t.transform(x, y))
 

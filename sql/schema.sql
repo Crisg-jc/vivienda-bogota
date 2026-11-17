@@ -1,4 +1,6 @@
--- Esquema generado desde scraper/db.py (PostgreSQL). Las tablas se crean solas al ejecutar el scraper.
+-- Esquema generado desde scraper/db.py (PostgreSQL) con sqlalchemy.schema.CreateTable/CreateIndex.
+-- Las tablas e índices se crean solos al ejecutar el recolector (metadata.create_all).
+-- En una base ya existente, create_all NO agrega índices nuevos: ejecute los CREATE INDEX a mano.
 
 CREATE TABLE dataset_versiones (
 	version SERIAL NOT NULL, 
@@ -20,6 +22,8 @@ CREATE TABLE enlaces (
 	PRIMARY KEY (url)
 );
 
+CREATE INDEX ix_enlaces_pendientes ON enlaces (portal, procesado);
+
 CREATE TABLE inmuebles_crudos (
 	id SERIAL NOT NULL, 
 	portal VARCHAR(40) NOT NULL, 
@@ -37,6 +41,10 @@ CREATE TABLE inmuebles_crudos (
 	localidad_txt VARCHAR(120), 
 	barrio_txt VARCHAR(160), 
 	tipo_txt VARCHAR(80), 
+	piso_txt VARCHAR(40), 
+	estado_txt VARCHAR(40), 
+	latitud_txt VARCHAR(40), 
+	longitud_txt VARCHAR(40), 
 	PRIMARY KEY (id), 
 	UNIQUE (url_origen)
 );
@@ -55,10 +63,17 @@ CREATE TABLE inmuebles_limpios (
 	barrio VARCHAR(160), 
 	antiguedad INTEGER, 
 	administracion NUMERIC(12, 0), 
+	piso INTEGER, 
+	estado VARCHAR(20), 
+	latitud NUMERIC(9, 6), 
+	longitud NUMERIC(9, 6), 
 	fecha_consulta DATE NOT NULL, 
 	url_origen VARCHAR(500) NOT NULL, 
 	version_dataset INTEGER NOT NULL, 
 	PRIMARY KEY (id), 
+	CONSTRAINT uq_limpios_version_crudo UNIQUE (version_dataset, crudo_id), 
 	FOREIGN KEY(crudo_id) REFERENCES inmuebles_crudos (id), 
 	FOREIGN KEY(version_dataset) REFERENCES dataset_versiones (version)
 );
+
+CREATE INDEX ix_limpios_version_localidad ON inmuebles_limpios (version_dataset, localidad);

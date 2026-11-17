@@ -1,0 +1,18 @@
+[project]
+name = "vivienda-bogota"
+version = "1.1.0"
+description = "Estimación del precio de publicación de apartamentos en venta en Bogotá D.C."
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Errores reales (F), estilo básico (E, W), errores probables (B) e imports ordenados (I).
+select = ["E", "F", "W", "B", "I"]
+# Se permite código compacto en una línea y nombres cortos de una letra en comprensiones.
+ignore = ["E501", "E702", "E731", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

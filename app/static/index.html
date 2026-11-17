@@ -97,7 +97,7 @@
         </div>
 
         <div class="resultado__lleno" id="resultado-lleno" hidden>
-          <p class="resultado__rotulo">Precio de publicación estimado</p>
+          <p class="resultado__rotulo" id="r-rotulo">Precio de publicación estimado</p>
           <p class="precio" id="r-precio">—</p>
           <p class="rango" id="r-rango"></p>
 
@@ -129,7 +129,7 @@
         <div class="tarjeta parecidos">
           <h2>Avisos parecidos</h2>
           <p class="como-leer">Los más cercanos en área, estrato, localidad y habitaciones. Son los círculos de la cinta.</p>
-          <div class="desliza">
+          <div class="desliza" tabindex="0" role="region" aria-label="Tabla de avisos parecidos">
             <table class="tabla tabla--compacta">
               <thead><tr><th>Precio</th><th>Por m²</th><th>Área</th><th>Estrato</th><th>Localidad</th><th><span class="sr">Enlace</span></th></tr></thead>
               <tbody id="r-similares"></tbody>
@@ -206,7 +206,7 @@
         <p id="a-conteo" aria-live="polite"></p>
         <button class="boton-texto" id="a-limpiar" type="button" hidden>Quitar filtros</button>
       </div>
-      <div class="tabla-marco">
+      <div class="tabla-marco" tabindex="0" role="region" aria-label="Tabla de avisos">
         <table class="tabla">
           <thead><tr><th>Precio</th><th>Por m²</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th><span class="sr">Enlace</span></th></tr></thead>
           <tbody id="a-filas"></tbody>
@@ -232,7 +232,7 @@
           <dl class="prueba" id="mo-prueba"></dl>
           <h3>Comparación con validación cruzada</h3>
           <p class="como-leer">MAE es el error promedio en pesos; el error relativo lo divide por el precio mediano. Gana el de menor MAE, siempre que supere a la línea base.</p>
-          <div class="desliza">
+          <div class="desliza" tabindex="0" role="region" aria-label="Comparación de modelos">
             <table class="tabla">
               <thead><tr><th>Modelo</th><th class="num">MAE</th><th class="num">Error relativo</th><th class="num">R²</th></tr></thead>
               <tbody id="mo-cv"></tbody>
@@ -249,11 +249,13 @@
   </footer>
 
   <!-- En el celular: el precio sigue visible mientras se ajusta el formulario -->
+  <aside aria-label="Precio estimado">
   <a class="precio-flotante" id="precio-flotante" href="#resultado" hidden>
     <span class="precio-flotante__rotulo">Precio estimado</span>
     <span class="precio-flotante__cifra" id="pf-precio"></span>
     <span class="precio-flotante__ver">Ver detalle</span>
   </a>
+  </aside>
 
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
 

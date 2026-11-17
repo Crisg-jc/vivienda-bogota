@@ -13,7 +13,30 @@ NOMBRES = {"area_m2": "Área", "habitaciones": "Habitaciones", "banos": "Baños"
 
 
 def cargar_modelo() -> dict | None:
-    return joblib.load(MODELO) if MODELO.exists() else None
+    """Carga el modelo guardado. joblib usa pickle: solo se cargan artefactos producidos por este
+    mismo proyecto (artefactos/ no se sube al repositorio ni se acepta desde fuera)."""
+    if not MODELO.exists():
+        return None
+    art = joblib.load(MODELO)
+    un_hilo(art["modelo"])
+    return art
+
+
+def un_hilo(modelo) -> None:
+    """En inferencia se predicen pocas filas: repartirlas en varios hilos cuesta más que calcularlas.
+    Con un bosque de 300 árboles, n_jobs=1 baja una predicción de unos 58 ms a 13 ms."""
+    for est in _componentes(modelo):
+        if "n_jobs" in getattr(est, "get_params", lambda: {})():
+            est.set_params(n_jobs=1)
+
+
+def _componentes(m):
+    yield m
+    for hijo in (getattr(m, "regressor_", None), getattr(m, "regressor", None)):
+        if hijo is not None:
+            yield from _componentes(hijo)
+    for _, paso in getattr(m, "steps", []):
+        yield from _componentes(paso)
 
 
 def _fila(datos: dict) -> pd.DataFrame:
@@ -35,26 +58,24 @@ def _valor_legible(var: str, v) -> str:
 def estimar(art: dict, datos: dict) -> dict:
     modelo, q, ref = art["modelo"], art["q_log"], art["referencia"]
     X = _fila(datos)
-    precio = float(modelo.predict(X)[0])
 
     # Explicación: cuánto cambia la estimación si una sola característica toma el valor del
     # apartamento típico del dataset. No es una descomposición exacta (los efectos se combinan),
     # pero responde la pregunta práctica: "¿qué está subiendo o bajando este precio?".
+    # La fila original y sus variantes van en UNA sola predicción (antes eran hasta 8 llamadas).
+    variantes = [var for var in D.VARIABLES
+                 if var in ref and datos.get(var) is not None and X.at[0, var] != ref[var]]
+    lote = pd.concat([X] * (1 + len(variantes)), ignore_index=True)
+    for i, var in enumerate(variantes, start=1):
+        lote.at[i, var] = ref[var]
+    pred = modelo.predict(lote)
+    precio = float(pred[0])
     efectos = []
-    for var in D.VARIABLES:
-        if var not in ref:
-            continue
-        actual = X.at[0, var]
-        if datos.get(var) is None:      # lo que el usuario no informó no se explica
-            continue
-        if actual == ref[var]:
-            continue
-        alt = X.copy()
-        alt.at[0, var] = ref[var]
-        efecto = precio - float(modelo.predict(alt)[0])
+    for i, var in enumerate(variantes, start=1):
+        efecto = precio - float(pred[i])
         if abs(efecto) >= 0.005 * precio:
             efectos.append({"variable": var, "nombre": NOMBRES[var], "efecto": round(efecto),
-                            "valor": _valor_legible(var, actual), "tipico": _valor_legible(var, ref[var])})
+                            "valor": _valor_legible(var, X.at[0, var]), "tipico": _valor_legible(var, ref[var])})
     efectos.sort(key=lambda e: -abs(e["efecto"]))
 
     return {

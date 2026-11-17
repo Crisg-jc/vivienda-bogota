@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from limpieza.normalizar import LOCALIDADES
+
 from .datos import DEMO
 
 # Estrato típico y centro aproximado de cada localidad (solo para dispersar puntos en el mapa).

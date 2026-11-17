@@ -22,3 +22,4 @@ mlruns/
 .DS_Store
 .vscode/
 .idea/
+.ruff_cache/

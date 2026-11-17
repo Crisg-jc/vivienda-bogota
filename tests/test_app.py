@@ -92,6 +92,7 @@ def test_interfaz_se_sirve(cliente):
 
 def test_linea_base_usa_respaldo_por_estrato():
     import pandas as pd
+
     from modelo.linea_base import LineaBase
     X = pd.DataFrame({"localidad": ["A"] * 3 + ["B"] * 3, "estrato": [3] * 6, "area_m2": [50.0] * 6})
     y = [150e6, 150e6, 150e6, 250e6, 250e6, 250e6]
@@ -100,3 +101,61 @@ def test_linea_base_usa_respaldo_por_estrato():
     p = lb.predict(nuevo)
     assert p[0] == pytest.approx(300e6)          # localidad y estrato conocidos
     assert p[1] == pytest.approx(400e6)          # localidad nueva: mediana del estrato (4 M/m²)
+
+
+def test_cabeceras_de_seguridad_y_cache(cliente):
+    c, _ = cliente
+    r = c.get("/")
+    assert "script-src 'self'" in r.headers["content-security-policy"]
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["x-request-id"]
+    assert c.get("/api/estado").headers["cache-control"] == "no-store"
+    assert "max-age" in c.get("/static/app.js").headers["cache-control"]
+
+
+def test_salud_y_compresion(cliente):
+    c, _ = cliente
+    s = c.get("/api/salud").json()
+    assert s["estado"] == "ok" and s["avisos"] > 0
+    r = c.get("/api/mercado", headers={"Accept-Encoding": "gzip"})
+    assert r.headers.get("content-encoding") == "gzip"
+
+
+def test_enlaces_que_no_son_http_no_salen_de_la_api():
+    from app.main import aviso
+    assert aviso({"precio": 1, "url_origen": "javascript:alert(1)"})["url_origen"] is None
+    assert aviso({"precio": 1, "url_origen": "https://www.fincaraiz.com.co/x/1"})["url_origen"].startswith("https://")
+
+
+def test_explicacion_en_lote_igual_a_predicciones_separadas(cliente):
+    """La estimación agrupa las variantes en una predicción: debe dar lo mismo que una por una."""
+    from modelo import datos as D
+    from modelo import entrenar as E
+    from modelo import estimar as ES
+    df = D.cargar(D.DEMO)
+    X = E.preparar(df)
+    arbol = E.candidatos(len(df))["Árbol de decisión"].fit(X, df.precio)
+    ES.un_hilo(arbol)
+    art = {"modelo": arbol, "q_log": 0.2, "referencia": E.referencia(X), "dominio": E.dominio(df, X)}
+    datos = {"area_m2": 120, "estrato": 6, "localidad": "Bosa", "habitaciones": 4, "banos": 3, "parqueaderos": 2}
+    r = ES.estimar(art, datos)
+    fila = ES._fila(datos)
+    for e in r["efectos"]:
+        alt = fila.copy()
+        alt.at[0, e["variable"]] = art["referencia"][e["variable"]]
+        esperado = arbol.predict(fila)[0] - arbol.predict(alt)[0]
+        assert e["efecto"] == pytest.approx(esperado, abs=1)
+
+
+def test_inferencia_en_un_solo_hilo():
+    import pandas as pd
+
+    from modelo import entrenar as E
+    from modelo import estimar as ES
+    X = pd.DataFrame({c: [1.0, 2.0, 3.0, 4.0] for c in ["area_m2", "habitaciones", "banos", "estrato",
+                                                         "parqueaderos", "antiguedad"]})
+    X["localidad"] = ["A", "B", "A", "B"]
+    m = E.candidatos(40)["Bosque aleatorio"].fit(X, [1e8, 2e8, 3e8, 4e8])
+    ES.un_hilo(m)
+    assert m.regressor_.named_steps["reg"].n_jobs == 1

@@ -1,14 +1,12 @@
 """Pruebas con páginas HTML FICTICIAS. No son datos del mercado: solo verifican el código."""
 import json
-import os
-import pathlib
 
 import pandas as pd
 import pytest
 
+from limpieza import normalizar as nz
 from scraper.extraer import enlaces_detalle, extraer
 from scraper.http import Robots
-from limpieza import normalizar as nz
 
 ROBOTS_FR = """
 User-agent: AhrefsBot
@@ -99,8 +97,8 @@ def test_area_localidad_antiguedad():
 
 def test_construccion_dataset_completa(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/t.db")
-    from scraper import db
     from limpieza import construir_dataset as cd
+    from scraper import db
     monkeypatch.setattr(cd, "RAIZ", tmp_path)
     eng = db.motor()
     import datetime as dt

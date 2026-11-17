@@ -14,13 +14,14 @@
   --liquen: #7C9486;
   --linea: #CAD3CD;
   --linea-suave: #DFE5E1;
+  --borde-campo: #77897F;   /* 3,25:1 contra la niebla: WCAG 1.4.11 pide 3:1 en controles */
   --ladrillo: #B4472C;
   --ladrillo-claro: #F1D9D0;
   --ladrillo-noche: #F2B8A5;
   --ambar: #8A5A12;
   --ambar-fondo: #F6ECD8;
   /* estratos 1 a 6, de claro a oscuro */
-  --e1: #C9D8C4; --e2: #9DBBA0; --e3: #6F9C80; --e4: #4A7E67; --e5: #2E5F4F; --e6: #173A31;
+  --e1: #C9D8C4; --e2: #9DBBA0; --e3: #7FA78C; --e4: #4A7E67; --e5: #2E5F4F; --e6: #173A31;
 
   --display: "Bricolage Grotesque", "Arial Narrow", system-ui, sans-serif;
   --texto: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -100,17 +101,17 @@ main { max-width: var(--ancho); margin: 0 auto; padding: 0 var(--hueco); }
 .opcional { font-weight: 400; color: var(--musgo); }
 input[type=number], select {
   font: inherit; color: inherit; width: 100%;
-  background: var(--papel); border: 1px solid var(--linea); border-radius: var(--radio);
+  background: var(--papel); border: 1px solid var(--borde-campo); border-radius: var(--radio);
   padding: .6rem .75rem; min-height: 2.75rem;
 }
-input[type=number]:hover, select:hover { border-color: var(--liquen); }
+input[type=number]:hover, select:hover { border-color: var(--paramo); }
 .con-sufijo { position: relative; }
 .con-sufijo input { padding-right: 3.5rem; font-variant-numeric: tabular-nums; }
 .con-sufijo span { position: absolute; right: .8rem; top: 50%; translate: 0 -50%; color: var(--musgo); font-size: var(--t-s); pointer-events: none; }
 #area { font: 600 var(--t-l)/1 var(--display); }
 .deslizador { width: 100%; accent-color: var(--paramo); margin: .2rem 0 0; }
 
-.segmentos { display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid var(--linea); border-radius: var(--radio); overflow: hidden; background: var(--papel); }
+.segmentos { display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid var(--borde-campo); border-radius: var(--radio); overflow: hidden; background: var(--papel); }
 .segmentos button {
   font: 600 var(--t-m)/1 var(--display); color: var(--paramo); background: none; border: 0; border-left: 1px solid var(--linea-suave);
   min-height: 2.9rem; cursor: pointer; position: relative;
@@ -122,10 +123,10 @@ input[type=number]:hover, select:hover { border-color: var(--liquen); }
 .segmentos button[aria-checked=true]::after { background: var(--ladrillo); }
 
 .contadores { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-.contador__control { display: flex; align-items: center; border: 1px solid var(--linea); border-radius: var(--radio); background: var(--papel); min-height: 2.75rem; }
+.contador__control { display: flex; align-items: center; border: 1px solid var(--borde-campo); border-radius: var(--radio); background: var(--papel); min-height: 2.75rem; }
 .contador__control button { width: 2.6rem; align-self: stretch; border: 0; background: none; font: 500 1.25rem/1 var(--texto); color: var(--musgo); cursor: pointer; }
 .contador__control button:hover { color: var(--paramo); background: var(--niebla); }
-.contador__control button:disabled { color: var(--linea); cursor: default; background: none; }
+.contador__control button:disabled { color: var(--liquen); opacity: .45; cursor: default; background: none; }
 .contador__control output { flex: 1; text-align: center; font: 600 var(--t-l)/1 var(--display); font-variant-numeric: tabular-nums; }
 
 /* el formulario no tiene botón: el precio se recalcula solo, y esta línea lo dice */
@@ -140,7 +141,7 @@ input[type=number]:hover, select:hover { border-color: var(--liquen); }
   border: 0; border-radius: var(--radio); padding: .95rem 1.4rem; cursor: pointer;
 }
 .boton:hover { background: #0F241F; }
-.boton--sutil { background: none; color: var(--paramo); border: 1px solid var(--linea); padding: .55rem .9rem; font-size: var(--t-s); }
+.boton--sutil { background: none; color: var(--paramo); border: 1px solid var(--borde-campo); padding: .55rem .9rem; font-size: var(--t-s); }
 .boton--sutil:hover { background: var(--papel); }
 .boton--sutil:disabled { opacity: .4; cursor: default; }
 .boton-texto { font: 600 var(--t-s)/1 var(--texto); color: var(--paramo); background: none; border: 0; padding: .3rem 0; text-decoration: underline; text-underline-offset: .2em; cursor: pointer; }
@@ -253,6 +254,8 @@ input[type=number]:hover, select:hover { border-color: var(--liquen); }
 .filtros label { display: grid; gap: .3rem; font-size: var(--t-xs); font-weight: 600; min-width: 11rem; flex: 1 1 11rem; }
 .conteo { display: flex; align-items: baseline; gap: 1rem; margin: 1.25rem 0 .6rem; color: var(--musgo); font-size: var(--t-s); }
 .desliza { overflow-x: auto; position: relative; }
+.desliza:focus-visible, .tabla-marco:focus-visible { outline-offset: 4px; }
+.resultado__rotulo--ejemplo { color: var(--ambar); font-weight: 600; }
 .tabla-marco { position: relative; overflow-x: auto; border: 1px solid var(--linea); border-radius: var(--radio-tarjeta); background: var(--papel); }
 .tabla { width: 100%; border-collapse: collapse; font-size: var(--t-s); font-variant-numeric: tabular-nums; }
 .tabla th { text-align: left; font-weight: 600; font-size: var(--t-xs); color: var(--musgo); padding: .7rem .8rem; border-bottom: 1px solid var(--linea); white-space: nowrap; }

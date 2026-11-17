@@ -22,6 +22,7 @@ import pandas as pd
 from sqlalchemy import func, insert, select
 
 from scraper import db
+
 from . import geo
 from . import normalizar as nz
 

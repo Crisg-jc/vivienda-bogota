@@ -40,6 +40,8 @@ docker compose up --build
 
 Y abra <http://localhost:8000>. Las carpetas `datos/` y `artefactos/` se comparten con el contenedor, así que los datasets que ponga en `datos/` los usa la aplicación.
 
+El contenedor no corre como administrador (usuario `vivienda`, uid 10001). En Linux, si el contenedor no puede escribir en esas carpetas, deles permiso una vez: `sudo chown -R 10001 datos artefactos`.
+
 ## Usar datos reales
 
 La aplicación busca el dataset en este orden:
@@ -163,13 +165,23 @@ sql/schema.sql       esquema de referencia en PostgreSQL
 tests/               pruebas del recolector, la limpieza, el modelo y la API
 ```
 
+## Operación y seguridad
+
+- **Salud:** `GET /api/salud` responde 200 cuando el dataset y el modelo están cargados. Docker lo usa como chequeo de salud.
+- **Registro:** cada solicitud a la API deja una línea con método, ruta, estado, milisegundos y un identificador (`X-Request-ID`). El nivel se cambia con `VIVIENDA_LOG=DEBUG`.
+- **Cabeceras:** política de contenido (CSP) que solo permite recursos propios y las teselas del mapa, `nosniff`, bloqueo de marcos y `Referrer-Policy`.
+- **Datos en la interfaz:** todo texto de los datos se escapa antes de insertarse como HTML y solo se aceptan enlaces http(s).
+- **Compartir una estimación:** el formulario queda en la URL, por ejemplo `/?area=70&estrato=4&localidad=Suba`.
+- **Antes de publicar en internet:** ponga la app detrás de un proxy con HTTPS y límite de solicitudes (Caddy o Nginx), y entrene fuera del arranque. El diagnóstico completo está en el documento de diagnóstico del proyecto.
+
 ## Pruebas
 
 ```bash
-pytest -q
+ruff check .      # estilo y errores probables
+pytest -q         # 32 pruebas
 ```
 
-GitHub Actions las ejecuta en cada cambio (`.github/workflows/pruebas.yml`).
+GitHub Actions ejecuta las dos en cada cambio, y además construye la imagen de Docker y comprueba que arranque sana (`.github/workflows/pruebas.yml`).
 
 ## Licencia
 

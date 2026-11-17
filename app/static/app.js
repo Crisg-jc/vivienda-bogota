@@ -13,6 +13,12 @@ const corto = (v) => `$${fmt.format(Math.round(v / 1e6))} M`;
 const m2 = (v) => `$${fmt1.format(v / 1e6)} M`;
 const area = (v) => `${fmt.format(v)} m²`;
 
+// Todo texto que viene de los datos pasa por esc() antes de entrar en HTML: un barrio o una localidad
+// con "<script>" en un CSV ajeno se muestra como texto, nunca se ejecuta.
+const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
+const urlSegura = (u) => (typeof u === "string" && /^https?:\/\//.test(u) ? u : null);
+
 async function api(ruta, opciones) {
   const r = await fetch(ruta, opciones);
   if (!r.ok) {
@@ -81,9 +87,39 @@ async function iniciar() {
 // ---------------------------------------------------------------- formulario
 let estratoElegido = 4;
 
+// La estimación vive en la URL (?area=70&estrato=4…): se puede guardar, compartir y volver a ella.
+const CAMPOS_URL = ["area", "estrato", "localidad", "habitaciones", "banos", "parqueaderos", "antiguedad"];
+let interactuo = false;   // false = el precio en pantalla es el ejemplo inicial, no el apartamento del usuario
+
+function leerURL() {
+  const q = new URLSearchParams(location.search);
+  const entero = (k, lo, hi) => { const v = parseInt(q.get(k), 10); return Number.isFinite(v) && v >= lo && v <= hi ? v : null; };
+  const d = {
+    area: entero("area", 15, 1000), estrato: entero("estrato", 1, 6), habitaciones: entero("habitaciones", 0, 8),
+    banos: entero("banos", 0, 8), parqueaderos: entero("parqueaderos", 0, 6), antiguedad: entero("antiguedad", 0, 100),
+    localidad: ESTADO.localidades.includes(q.get("localidad")) ? q.get("localidad") : null,
+  };
+  if (d.area != null) { $("#area").value = d.area; $("#area-rango").value = d.area; }
+  if (d.localidad) $("#localidad").value = d.localidad;
+  if (d.antiguedad != null) $("#antiguedad").value = d.antiguedad;
+  for (const n of ["habitaciones", "banos", "parqueaderos"]) {
+    if (d[n] != null) document.querySelector(`.contador[data-nombre=${n}]`).dataset.valor = d[n];
+  }
+  interactuo = CAMPOS_URL.some((k) => d[k] != null);
+  return d.estrato;
+}
+
+function escribirURL(datos) {
+  const q = new URLSearchParams();
+  const valores = { ...datos, area: datos.area_m2 };
+  for (const k of CAMPOS_URL) if (valores[k] != null && valores[k] !== "") q.set(k, valores[k]);
+  history.replaceState(null, "", `?${q}${location.hash}`);
+}
+
 function construirFormulario(ref) {
   const grupo = $("#estratos");
-  estratoElegido = Math.round(parseFloat(ref.estrato)) || 4;
+  const estratoURL = leerURL();
+  estratoElegido = estratoURL ?? (Math.round(parseFloat(ref.estrato)) || 4);
   for (let e = 1; e <= 6; e++) {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = e; b.setAttribute("role", "radio");
@@ -137,7 +173,7 @@ function elegirEstrato(e, enfocar) {
 }
 
 let temporizador;
-function programar() { clearTimeout(temporizador); temporizador = setTimeout(estimarAhora, 350); }
+function programar() { interactuo = true; clearTimeout(temporizador); temporizador = setTimeout(estimarAhora, 350); }
 
 function leerFormulario() {
   const num = (v) => (v === "" || v == null ? null : Number(v));
@@ -176,6 +212,10 @@ function pintarResultado(r, datos) {
   $("#resultado-lleno").hidden = false;
   $("#detalle").hidden = false;
   $("#resultado").setAttribute("aria-busy", "false");
+  const rotulo = $("#r-rotulo");
+  rotulo.textContent = interactuo ? "Precio de publicación estimado" : "Ejemplo con un apartamento típico: cambie los datos para ver el suyo";
+  rotulo.classList.toggle("resultado__rotulo--ejemplo", !interactuo);
+  if (interactuo) escribirURL(datos);
   $("#r-precio").textContent = millones(r.precio);
   $("#pf-precio").textContent = millones(r.precio);
   hayResultado = true; actualizarFlotante();
@@ -225,7 +265,7 @@ function pintarCinta(r) {
     while (ocupados.some((o) => o.fila === fila && Math.abs(o.cx - cx) < 13)) fila++;
     ocupados.push({ cx, fila });
     const c = el("circle", { class: "vecino", cx, cy: y0 - 12 - fila * 13, r: 5.5, tabindex: 0 }, svg);
-    conTip(c, `${corto(s.precio)}, ${area(s.area_m2)}<br>Estrato ${s.estrato ?? "sin dato"}${s.localidad ? `, ${s.localidad}` : ""}`);
+    conTip(c, `${corto(s.precio)}, ${area(s.area_m2)}<br>Estrato ${esc(s.estrato ?? "sin dato")}${s.localidad ? `, ${esc(s.localidad)}` : ""}`);
   }
   // aguja del precio estimado: el único movimiento automático de la página
   const g = el("g", { class: "grupo-aguja" }, svg);
@@ -247,7 +287,7 @@ function pintarEfectos(r) {
   const ref = r.referencia;
   $("#r-efectos-guia").textContent = `Comparado con el apartamento típico de los datos (${ref.area_m2}, estrato ${ref.estrato}${ref.localidad && ref.localidad !== "Sin dato" ? `, ${ref.localidad}` : ""}): cuánto cambia la estimación por cada característica distinta. Son aproximaciones; los efectos no se suman exactamente.`;
   if (!r.efectos.length) {
-    caja.innerHTML = `<p class="efectos__vacio">Este apartamento se parece al típico, o el modelo (${r.modelo}) no usa las características en las que difiere.</p>`;
+    caja.innerHTML = `<p class="efectos__vacio">Este apartamento se parece al típico, o el modelo (${esc(r.modelo)}) no usa las características en las que difiere.</p>`;
     return;
   }
   const maximo = Math.max(...r.efectos.map((e) => Math.abs(e.efecto)));
@@ -255,7 +295,7 @@ function pintarEfectos(r) {
     const sube = e.efecto > 0;
     const fila = document.createElement("div"); fila.className = "efecto";
     const ancho = (Math.abs(e.efecto) / maximo) * 50;
-    fila.innerHTML = `<span class="efecto__nombre">${e.nombre}: ${e.valor}<small>típico: ${e.tipico}</small></span>
+    fila.innerHTML = `<span class="efecto__nombre">${esc(e.nombre)}: ${esc(e.valor)}<small>típico: ${esc(e.tipico)}</small></span>
       <span class="efecto__pista" aria-hidden="true"><span class="efecto__barra efecto__barra--${sube ? "sube" : "baja"}" style="width:${ancho}%"></span></span>
       <span class="efecto__valor">${sube ? "+" : "−"}${corto(Math.abs(e.efecto))}</span>`;
     caja.appendChild(fila);
@@ -263,7 +303,8 @@ function pintarEfectos(r) {
 }
 
 function enlaceAviso(url) {
-  return url ? `<a href="${url}" target="_blank" rel="noopener">Ver aviso<span class="sr"> (se abre en otra pestaña)</span></a>` : "";
+  url = urlSegura(url);
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Ver aviso<span class="sr"> (se abre en otra pestaña)</span></a>` : "";
 }
 function chipEstrato(e) {
   if (e == null) return "—";
@@ -274,7 +315,7 @@ function chipEstrato(e) {
 function pintarSimilares(lista) {
   $("#r-similares").innerHTML = lista.map((s) => `<tr>
     <td>${corto(s.precio)}</td><td>${m2(s.precio_m2)}</td><td>${area(s.area_m2)}</td><td>${chipEstrato(s.estrato)}</td>
-    <td>${s.localidad ?? "—"}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
+    <td>${esc(s.localidad ?? "—")}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
 }
 
 // ---------------------------------------------------------------- mercado
@@ -304,6 +345,8 @@ function pintarCajas(estratos) {
   if (!estratos.length) { svg.outerHTML = `<p class="como-leer">No hay suficientes avisos por estrato para dibujar cajas.</p>`; return; }
   // se dibuja al ancho real del contenedor para que el texto conserve su tamaño en cualquier pantalla
   const W = Math.max(300, svg.parentElement.clientWidth), estrecho = W < 620;
+  // el lector de pantalla recibe las cifras, no solo el título del gráfico
+  svg.setAttribute("aria-label", `Precio mediano del metro cuadrado según estrato: ${estratos.map((e) => `estrato ${e.estrato}, ${m2(e.mediana)} con ${e.n} avisos`).join("; ")}.`);
   const H = estrecho ? 316 : 340, iz = estrecho ? 62 : 86, de = 8, ar = 16, ab = estrecho ? 64 : 48;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const todos = estratos.flatMap((e) => [e.min, e.max, ...e.atipicos]);
@@ -373,7 +416,7 @@ function pintarLocalidades(locs) {
   if (!locs.length) { caja.innerHTML = `<p class="como-leer">Ningún aviso tiene localidad asignada.</p>`; return; }
   const max = Math.max(...locs.map((l) => l.mediana_m2));
   caja.innerHTML = locs.map((l) => `<div class="barra-loc${l.n < 10 ? " barra-loc--pocos" : ""}">
-      <span class="barra-loc__nombre" title="${l.localidad}">${l.localidad} <small>(${fmt.format(l.n)})</small></span>
+      <span class="barra-loc__nombre" title="${esc(l.localidad)}">${esc(l.localidad)} <small>(${fmt.format(l.n)})</small></span>
       <span class="barra-loc__pista"><span class="barra-loc__relleno" style="width:${(l.mediana_m2 / max) * 100}%"></span></span>
       <span class="barra-loc__valor">${m2(l.mediana_m2)}</span></div>`).join("");
 }
@@ -404,7 +447,7 @@ function pintarMapa(puntos) {
   for (const p of puntos) {
     const t = Math.min(1, Math.max(0, (p.m2 - lo) / (hi - lo || 1)));
     capa.push(L.circleMarker([p.lat, p.lon], { radius: 5, weight: 1, color: "#fff", fillColor: colorM2(t), fillOpacity: 0.9 })
-      .bindPopup(`<strong>${corto(p.precio)}</strong><br>${area(p.area)}, ${m2(p.m2)} por m²${p.localidad ? `<br>${p.localidad}` : ""}`));
+      .bindPopup(`<strong>${corto(p.precio)}</strong><br>${area(p.area)}, ${m2(p.m2)} por m²${p.localidad ? `<br>${esc(p.localidad)}` : ""}`));
   }
   const grupo = L.featureGroup(capa).addTo(mapa);
   mapa.fitBounds(grupo.getBounds(), { padding: [20, 20], maxZoom: 13 });
@@ -424,7 +467,7 @@ async function cargarAvisos() {
   $("#a-filas").innerHTML = r.avisos.map((a) => `<tr>
       <td>${corto(a.precio)}</td><td>${m2(a.precio_m2)}</td><td>${area(a.area_m2)}</td>
       <td>${a.habitaciones ?? "—"}</td><td>${a.banos ?? "—"}</td><td>${chipEstrato(a.estrato)}</td>
-      <td>${a.localidad ?? "—"}</td><td>${a.barrio ?? "—"}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
+      <td>${esc(a.localidad ?? "—")}</td><td>${esc(a.barrio ?? "—")}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
   $("#a-pagina").textContent = `Página ${r.pagina} de ${paginas}`;
   $("#a-limpiar").hidden = !["localidad", "estrato", "precio_max", "area_min"].some((k) => f.get(k));
   $("#a-anterior").disabled = r.pagina <= 1;
@@ -443,7 +486,7 @@ async function cargarModelo() {
   const m = await api("/api/modelo");
   const d = m.dataset, elegido = m.modelo_elegido, p = m.prueba_final[elegido], base = m.prueba_final["Línea base"];
   const veredicto = m.supera_linea_base
-    ? `El ${elegido.toLowerCase()} le gana a la línea base, así que es el que responde las estimaciones.`
+    ? `El ${esc(elegido.toLowerCase())} le gana a la línea base, así que es el que responde las estimaciones.`
     : `Ninguno de los tres modelos de árboles superó a la línea base, así que la aplicación usa la línea base. Es la decisión que el proyecto fijó de antemano: un modelo más complejo solo se usa si mejora el resultado.`;
   const advertencia = d.tipo === "demo"
     ? `<p><strong>Estas métricas salen de datos sintéticos</strong> y no dicen nada sobre el mercado real.</p>`
@@ -453,9 +496,9 @@ async function cargarModelo() {
     <p>La línea base es la cuenta que haría cualquiera con una hoja de cálculo: el precio mediano del metro cuadrado en la misma localidad y estrato, multiplicado por el área. Frente a ella se comparan un árbol de decisión, un bosque aleatorio y un modelo de <i>gradient boosting</i>. Los árboles aprenden el logaritmo del precio para que los apartamentos más caros no dominen.</p>
     <p>El rango de precio se calcula con los errores que el modelo comete en avisos que no vio (predicción conformal): debería contener el precio real ${Math.round(m.rango.nivel * 10)} de cada 10 veces.</p>
     ${advertencia}
-    <p>Entrenado el ${new Date(m.fecha).toLocaleString("es-CO", { dateStyle: "long", timeStyle: "short" })} con <code>${d.archivo}</code>: ${fmt.format(d.entrenamiento)} avisos para entrenar y ${fmt.format(d.prueba)} reservados para la prueba final. Para volver a entrenar: <code>python -m modelo.entrenar</code>.</p>`;
+    <p>Entrenado el ${new Date(m.fecha).toLocaleString("es-CO", { dateStyle: "long", timeStyle: "short" })} con <code>${esc(d.archivo)}</code>: ${fmt.format(d.entrenamiento)} avisos para entrenar y ${fmt.format(d.prueba)} reservados para la prueba final. Para volver a entrenar: <code>python -m modelo.entrenar</code>.</p>`;
   $("#mo-cv").innerHTML = m.validacion_cruzada.resultados.map((r) => `<tr class="${r.modelo === elegido ? "elegido" : ""}">
-      <td>${r.modelo}</td><td class="num">${corto(r.mae)}</td><td class="num">${fmt1.format(r.error_relativo * 100)} %</td>
+      <td>${esc(r.modelo)}</td><td class="num">${corto(r.mae)}</td><td class="num">${fmt1.format(r.error_relativo * 100)} %</td>
       <td class="num">${r.r2 == null ? "—" : r.r2.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`).join("");
   const filas = [
     ["Error promedio (MAE)", corto(p.mae)],

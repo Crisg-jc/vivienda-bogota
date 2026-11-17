@@ -12,7 +12,6 @@ import pandas as pd
 from sqlalchemy import insert, select
 
 from scraper import db
-
 from scraper.extraer import CAMPOS
 
 

@@ -27,7 +27,7 @@ class LineaBase(BaseEstimator, RegressorMixin):
 
     def predict(self, X):
         salida = []
-        for loc, est, area in zip(X["localidad"], X["estrato"], X["area_m2"]):
+        for loc, est, area in zip(X["localidad"], X["estrato"], X["area_m2"], strict=True):
             m2 = self.por_loc_estrato_.get((loc, est), self.por_estrato_.get(est, self.ciudad_))
             salida.append(m2 * area)
         return np.asarray(salida, float)

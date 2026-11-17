@@ -9,9 +9,23 @@ Tablas:
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Integer,
-                        MetaData, Numeric, String, Table, Text, create_engine,
-                        func)
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    Numeric,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    func,
+)
 
 load_dotenv()
 
@@ -72,7 +86,13 @@ inmuebles_limpios = Table(
     Column("fecha_consulta", Date, nullable=False),
     Column("url_origen", String(500), nullable=False),
     Column("version_dataset", Integer, ForeignKey("dataset_versiones.version"), nullable=False),
+    # Un aviso crudo aparece una sola vez por versión del dataset.
+    UniqueConstraint("version_dataset", "crudo_id", name="uq_limpios_version_crudo"),
 )
+# Consultas frecuentes: el recolector pide "enlaces pendientes de este portal" en cada ejecución,
+# y el análisis filtra los limpios por versión y localidad.
+Index("ix_enlaces_pendientes", enlaces.c.portal, enlaces.c.procesado)
+Index("ix_limpios_version_localidad", inmuebles_limpios.c.version_dataset, inmuebles_limpios.c.localidad)
 
 dataset_versiones = Table(
     "dataset_versiones", metadata,
