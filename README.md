@@ -17,6 +17,10 @@ Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Crist
 - **Avisos:** una tabla con filtros para revisar los datos uno por uno, con cuánto está cada aviso por encima o por debajo del precio que el modelo esperaba para él, y si su precio subió o bajó.
 - **Modelo:** las métricas de validación cruzada y de la prueba final, explicadas.
 
+## Navegadores compatibles
+
+Funciona en las versiones publicadas desde finales de 2020 de Chrome, Edge, Firefox, Safari (Mac, iPhone y iPad), Opera y Samsung Internet, en computador, tableta y celular. La lista exacta está en `.browserslistrc`, y la integración continua revisa en cada cambio que el código no use nada que esos navegadores no entiendan. En navegadores más antiguos, como Internet Explorer, la página muestra un aviso en vez de quedar en blanco. El mapa necesita internet solo para el fondo de calles: los límites de Colombia y de las localidades vienen en el repositorio.
+
 ## Empezar en 3 minutos
 
 Necesita Python 3.11 o superior.

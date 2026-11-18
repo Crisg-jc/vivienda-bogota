@@ -1,0 +1,9 @@
+# Navegadores que la aplicación debe soportar (publicados desde finales de 2020).
+# La revisión de compatibilidad de la CI usa esta lista.
+chrome >= 88
+edge >= 88
+firefox >= 78
+safari >= 14
+ios_saf >= 14
+samsung >= 15
+opera >= 74

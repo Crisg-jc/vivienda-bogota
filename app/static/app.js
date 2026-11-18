@@ -1,5 +1,6 @@
 // Vivienda Bogotá: interfaz sin dependencias (salvo Leaflet para el mapa).
 const $ = (s, r = document) => r.querySelector(s);
+const ultimo = (lista) => lista[lista.length - 1];   // Array.prototype.at no existe en Safari < 15.4
 const NS = "http://www.w3.org/2000/svg";
 const COLOR_ESTRATO = [null, "--e1", "--e2", "--e3", "--e4", "--e5", "--e6"]
   .map((v) => v && getComputedStyle(document.documentElement).getPropertyValue(v).trim());
@@ -420,7 +421,7 @@ function pintarDispersion(puntos) {
   const svg = $("#g-dispersion"); svg.replaceChildren();
   const W = Math.max(300, svg.parentElement.clientWidth), H = Math.min(400, Math.round(W * 0.72)), iz = 64, de = 12, ar = 12, ab = 44;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const p99 = (arr) => { const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length * 0.99)] ?? s.at(-1); };
+  const p99 = (arr) => { const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length * 0.99)] ?? ultimo(s); };
   const xmax = p99(puntos.map((p) => p.area)) * 1.05, ymax = p99(puntos.map((p) => p.precio)) * 1.05;
   const x = (v) => iz + (v / xmax) * (W - iz - de), y = (v) => H - ab - (v / ymax) * (H - ab - ar);
   for (const v of marcasBonitas(0, ymax / 1e6, 5)) {
@@ -492,7 +493,7 @@ async function cargarZonas() {
 
   const estables = conDatos.filter((l) => l.n >= 10).sort((a, b) => b.mediana_m2 - a.mediana_m2);
   $("#z-entrada").textContent = estables.length >= 2
-    ? `${estables[0].nombre} es la localidad con el metro cuadrado más caro (${m2(estables[0].mediana_m2)}) y ${estables.at(-1).nombre} la más barata (${m2(estables.at(-1).mediana_m2)}). Elija una localidad en el mapa o en la lista para ver su análisis.`
+    ? `${estables[0].nombre} es la localidad con el metro cuadrado más caro (${m2(estables[0].mediana_m2)}) y ${ultimo(estables).nombre} la más barata (${m2(ultimo(estables).mediana_m2)}). Elija una localidad en el mapa o en la lista para ver su análisis.`
     : "Elija una localidad en el mapa o en la lista para ver cuánto se pide allí y cómo se compara con el resto de Bogotá.";
 
   const sel = $("#z-localidad");

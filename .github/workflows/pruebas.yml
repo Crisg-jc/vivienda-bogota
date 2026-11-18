@@ -24,6 +24,23 @@ jobs:
       - name: Pruebas
         run: pytest -q
 
+  navegadores:
+    # La interfaz debe funcionar en Chrome, Edge, Firefox, Safari, Opera y Samsung Internet (.browserslistrc).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-save es-check@7.2.1 eslint@8.57.1 eslint-plugin-compat@4.2.0 doiuse@6.0.5 postcss@8.4.49
+      - name: Sintaxis de JavaScript (ES2020)
+        run: npx es-check es2020 app/static/app.js --module && npx es-check es5 app/static/navegador-antiguo.js
+      - name: APIs de JavaScript
+        run: npx eslint --no-eslintrc -c herramientas/compatibilidad.eslintrc.json app/static/app.js
+      - name: Propiedades CSS
+        run: node herramientas/compatibilidad_css.js
+
   imagen:
     # La imagen de Docker debe construirse y arrancar sana en cada cambio.
     runs-on: ubuntu-latest

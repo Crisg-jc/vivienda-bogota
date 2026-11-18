@@ -57,7 +57,8 @@ a:hover { color: var(--paramo); }
   position: sticky; top: 0; z-index: 30; min-height: var(--barra-alto);
   display: flex; align-items: center; gap: 2rem; flex-wrap: wrap;
   padding: .55rem var(--hueco);
-  background: color-mix(in srgb, var(--niebla) 90%, transparent);
+  background: rgba(238, 241, 238, .92);   /* niebla al 92 %; color-mix() no existe en Safari < 16.2 */
+  -webkit-backdrop-filter: blur(10px);    /* Safari lo necesita con prefijo */
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--linea);
 }
@@ -107,7 +108,7 @@ input[type=number], select {
 input[type=number]:hover, select:hover { border-color: var(--paramo); }
 .con-sufijo { position: relative; }
 .con-sufijo input { padding-right: 3.5rem; font-variant-numeric: tabular-nums; }
-.con-sufijo span { position: absolute; right: .8rem; top: 50%; translate: 0 -50%; color: var(--musgo); font-size: var(--t-s); pointer-events: none; }
+.con-sufijo span { position: absolute; right: .8rem; top: 50%; transform: translateY(-50%); color: var(--musgo); font-size: var(--t-s); pointer-events: none; }
 #area { font: 600 var(--t-l)/1 var(--display); }
 .deslizador { width: 100%; accent-color: var(--paramo); margin: .2rem 0 0; }
 
@@ -241,7 +242,7 @@ input[type=number]:hover, select:hover { border-color: var(--paramo); }
 .barra-loc__nombre small { color: var(--musgo); }
 .barra-loc__pista { height: .85rem; background: var(--linea-suave); border-radius: 2px; overflow: hidden; }
 .barra-loc__relleno { display: block; height: 100%; background: var(--e4); }
-.barra-loc--pocos .barra-loc__relleno { background: repeating-linear-gradient(45deg, var(--e3) 0 4px, var(--linea-suave) 4px 7px); }
+.barra-loc--pocos .barra-loc__relleno { background: repeating-linear-gradient(45deg, var(--e3) 0, var(--e3) 4px, var(--linea-suave) 4px, var(--linea-suave) 7px); }
 .barra-loc__valor { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .mapa { height: 34rem; border-radius: var(--radio-tarjeta); border: 1px solid var(--linea); background: var(--linea-suave); }
@@ -298,7 +299,7 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 .escala-mapa span { white-space: nowrap; }
 .escala-mapa .sin-datos { display: inline-flex; align-items: center; gap: .35rem; margin-left: .6rem; }
 .escala-mapa .sin-datos i { flex: none; width: 1rem; height: .7rem; border-radius: 2px; border: 1px solid var(--liquen);
-  background: repeating-linear-gradient(45deg, #DCE2DE 0 3px, #F4F6F4 3px 6px); }
+  background: repeating-linear-gradient(45deg, #DCE2DE 0, #DCE2DE 3px, #F4F6F4 3px, #F4F6F4 6px); }
 .pt { width: .7rem; height: .7rem; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--linea); }
 .pt--debajo { background: var(--e4); }
 .pt--en_linea { background: #A9B6AE; }
@@ -343,8 +344,8 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 .fila-rank--pocos { cursor: default; opacity: .65; }
 .pista-rank { position: relative; height: 1.1rem; }
 .pista-rank .ref { position: absolute; top: -4px; bottom: -4px; border-left: 1.5px dashed var(--liquen); }
-.pista-rank .bigote { position: absolute; top: 50%; height: 2px; background: var(--liquen); translate: 0 -50%; }
-.pista-rank .punto { position: absolute; top: 50%; width: .8rem; height: .8rem; border-radius: 50%; translate: -50% -50%; background: var(--e5); border: 2px solid var(--papel); }
+.pista-rank .bigote { position: absolute; top: 50%; height: 2px; background: var(--liquen); transform: translateY(-50%); }
+.pista-rank .punto { position: absolute; top: 50%; width: .8rem; height: .8rem; border-radius: 50%; transform: translate(-50%, -50%); background: var(--e5); border: 2px solid var(--papel); }
 .fila-rank[aria-pressed="true"] .punto { background: var(--ladrillo-noche); border-color: var(--paramo); }
 .fila-rank[aria-pressed="true"] .bigote { background: #9FB2A8; }
 .valor-rank { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -432,3 +433,6 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 .mapa-leyendas .escala-mapa { flex-wrap: wrap; row-gap: .35rem; }
 .cifras div { min-width: 0; }
 .cifras dd { overflow-wrap: anywhere; }
+
+/* Aviso para navegadores sin JavaScript o demasiado antiguos */
+.sin-soporte { margin: 0; padding: 1rem 1.25rem; background: #F6ECD8; color: #4D3608; border-bottom: 1px solid #E3CFA6; font: 600 1rem/1.5 system-ui, sans-serif; text-align: center; }

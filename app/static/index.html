@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/static/estilos.css">
 </head>
 <body>
+  <noscript><p class="sin-soporte">Esta aplicación necesita JavaScript. Actívelo en la configuración del navegador y recargue la página.</p></noscript>
   <a class="saltar" href="#estimar">Ir al estimador</a>
 
   <header class="barra">
@@ -339,5 +340,7 @@
 
   <script src="/static/vendor/leaflet/leaflet.js" defer></script>
   <script src="/static/app.js" type="module"></script>
+  <!-- Solo lo ejecutan navegadores sin módulos de JavaScript (Internet Explorer y anteriores a 2018) -->
+  <script nomodule src="/static/navegador-antiguo.js"></script>
 </body>
 </html>

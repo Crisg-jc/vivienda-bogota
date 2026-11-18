@@ -143,7 +143,7 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     q, esperados = cuantil_conformal(elegido, X, y, con_predicciones=True)
 
     metricas = {
-        "fecha": dt.datetime.now().isoformat(timespec="seconds"),
+        "fecha": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "dataset": {"archivo": ruta.name, "tipo": tipo, "sha256": D.huella(ruta), "avisos": n,
                     "entrenamiento": len(ye), "prueba": len(yp),
                     "precio_mediano": float(np.median(y))},

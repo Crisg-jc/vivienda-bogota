@@ -27,6 +27,20 @@ def ahora() -> dt.datetime:
     return dt.datetime.now().replace(microsecond=0)
 
 
+def con_zona(v):
+    """Fecha en ISO 8601 con zona horaria (2026-11-17T21:40:00-05:00).
+
+    Sin la zona, algunos navegadores (Safari antiguo) la leen como hora UTC y la muestran corrida."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        try:
+            v = dt.datetime.fromisoformat(v)
+        except ValueError:
+            return v
+    return (v if v.tzinfo else v.astimezone()).isoformat(timespec="seconds")
+
+
 class Orquestador:
     def __init__(self, recargar):
         self.recargar = recargar            # función de la app: recarga datos y modelo si cambiaron
@@ -145,6 +159,7 @@ class Orquestador:
     def estado(self) -> dict:
         conf, aj = self.ajustes()
         ciclo = cy.leer_estado()
+        u = ciclo.get("ultimo_ciclo")
         en_curso = bool(self.proceso and self.proceso.poll() is None)
         autorizados = [k for k, p in conf["portales"].items() if p.get("habilitado") and p.get("terminos_revisados")]
         if self.hilo is None:
@@ -162,9 +177,9 @@ class Orquestador:
             "fase": ciclo.get("fase") if en_curso else "",
             "detalle": ciclo.get("detalle") if en_curso else "",
             "contadores": ciclo.get("contadores") if en_curso else None,
-            "ultimo_ciclo": ciclo.get("ultimo_ciclo"),
-            "proximo_ciclo": self.proximo.isoformat() if self.proximo and not en_curso else None,
-            "pausa_hasta": self.pausa_hasta.isoformat() if self.pausa_hasta else None,
+            "ultimo_ciclo": {**u, "inicio": con_zona(u.get("inicio")), "fin": con_zona(u.get("fin"))} if u else None,
+            "proximo_ciclo": con_zona(self.proximo) if self.proximo and not en_curso else None,
+            "pausa_hasta": con_zona(self.pausa_hasta),
             "intervalo_horas": aj["intervalo_horas"],
             "dias_entre_revisiones": aj["dias_entre_revisiones"],
             "portales_autorizados": autorizados,
@@ -195,6 +210,6 @@ class Orquestador:
         try:
             with self.motor().begin() as c:
                 filas = c.execute(select(db.ejecuciones).order_by(db.ejecuciones.c.id.desc()).limit(n)).mappings()
-                return [{k: (v.isoformat() if isinstance(v, dt.datetime) else v) for k, v in f.items()} for f in filas]
+                return [{k: (con_zona(v) if isinstance(v, dt.datetime) else v) for k, v in f.items()} for f in filas]
         except Exception:
             return []
