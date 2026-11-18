@@ -5,8 +5,11 @@ Tablas:
   inmuebles_crudos -> lo que se extrajo de cada aviso, como texto, sin normalizar
   inmuebles_limpios-> registros que pasan las reglas de calidad (fuente del entrenamiento)
   dataset_versiones-> cortes congelados del dataset con su suma de verificación
+  cambios          -> historial: cada cambio de precio, característica o disponibilidad de un aviso
+  ejecuciones      -> cada ciclo automático, con sus conteos y su resultado
 """
 import os
+import pathlib
 
 from dotenv import load_dotenv
 from sqlalchemy import (
@@ -38,6 +41,10 @@ enlaces = Table(
     Column("descubierto_en", DateTime, server_default=func.now()),
     Column("procesado", Boolean, nullable=False, default=False),
     Column("ultimo_estado", String(40)),
+    # Seguimiento para el ciclo automático: cuándo se visitó y si el aviso sigue publicado
+    Column("ultima_visita", DateTime),
+    Column("visitas", Integer, default=0),
+    Column("disponible", Boolean, default=True),
 )
 
 inmuebles_crudos = Table(
@@ -62,6 +69,9 @@ inmuebles_crudos = Table(
     Column("estado_txt", String(40)),
     Column("latitud_txt", String(40)),
     Column("longitud_txt", String(40)),
+    Column("actualizado_en", DateTime),       # última vez que se confirmó o cambió
+    Column("disponible", Boolean, default=True),
+    Column("retirado_en", DateTime),
 )
 
 inmuebles_limpios = Table(
@@ -106,8 +116,66 @@ dataset_versiones = Table(
 )
 
 
+cambios = Table(
+    "cambios", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("url_origen", String(500), nullable=False),
+    Column("fecha", DateTime, nullable=False, server_default=func.now()),
+    Column("campo", String(40), nullable=False),     # precio, area, ..., disponible
+    Column("antes", String(160)),
+    Column("despues", String(160)),
+)
+Index("ix_cambios_url_fecha", cambios.c.url_origen, cambios.c.fecha)
+
+ejecuciones = Table(
+    "ejecuciones", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("inicio", DateTime, nullable=False),
+    Column("fin", DateTime),
+    Column("resultado", String(40)),                # completo | bloqueado | sin_portales | error
+    Column("enlaces_nuevos", Integer, default=0),
+    Column("avisos_nuevos", Integer, default=0),
+    Column("revisados", Integer, default=0),
+    Column("con_cambios", Integer, default=0),
+    Column("retirados", Integer, default=0),
+    Column("version_dataset", Integer),
+    Column("mensaje", Text),
+)
+
+RAIZ = pathlib.Path(__file__).resolve().parents[1]
+
+
+def url_por_defecto() -> str:
+    (RAIZ / "datos").mkdir(exist_ok=True)
+    return "sqlite:///" + (RAIZ / "datos" / "vivienda.db").as_posix()
+
+
+def asegurar_columnas(eng) -> list[str]:
+    """Migración mínima: agrega a las tablas existentes las columnas nuevas del modelo.
+
+    create_all crea tablas que faltan, pero no toca las que ya existen. Una base creada con una
+    versión anterior del recolector recibe aquí sus columnas nuevas (siempre opcionales), así que
+    los datos ya recolectados se conservan. Para cambios más profundos, usar Alembic.
+    """
+    from sqlalchemy import inspect, text
+    agregadas = []
+    insp = inspect(eng)
+    for tabla in metadata.sorted_tables:
+        if not insp.has_table(tabla.name):
+            continue
+        existentes = {c["name"] for c in insp.get_columns(tabla.name)}
+        for col in tabla.columns:
+            if col.name not in existentes:
+                tipo = col.type.compile(dialect=eng.dialect)
+                with eng.begin() as c:
+                    c.execute(text(f'ALTER TABLE {tabla.name} ADD COLUMN {col.name} {tipo}'))
+                agregadas.append(f"{tabla.name}.{col.name}")
+    return agregadas
+
+
 def motor(url: str | None = None):
-    url = url or os.getenv("DATABASE_URL", "sqlite:///datos/vivienda.db")
+    url = url or os.getenv("DATABASE_URL") or url_por_defecto()
     eng = create_engine(url, future=True)
     metadata.create_all(eng)
+    asegurar_columnas(eng)
     return eng

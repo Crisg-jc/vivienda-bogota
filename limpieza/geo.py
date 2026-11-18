@@ -2,8 +2,10 @@
 
 Usa el mapa oficial de localidades de Datos Abiertos Bogotá (licencia CC BY 4.0):
   https://datosabiertos.bogota.gov.co/dataset/localidad-bogota-d-c
-Se descarga una sola vez con:  python -m limpieza.geo descargar
-y queda en datos/localidades.geojson. Implementado sin librerías geográficas adicionales.
+El repositorio ya incluye una copia (limpieza/localidades_ideca.geojson, 20 localidades), así que
+funciona sin descargar nada. Para usar la versión más reciente del portal:
+  python -m limpieza.geo descargar      (queda en datos/localidades.geojson y tiene prioridad)
+Implementado sin librerías geográficas adicionales.
 """
 import json
 import pathlib
@@ -13,6 +15,7 @@ from . import normalizar as nz
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 ARCHIVO = RAIZ / "datos" / "localidades.geojson"
+INCLUIDO = pathlib.Path(__file__).with_name("localidades_ideca.geojson")
 URL = ("https://datosabiertos.bogota.gov.co/dataset/856cb657-8ca3-4ee8-857f-37211173b1f8/"
        "resource/497b8756-0927-4aee-8da9-ca4e32ca3a8a/download/loca.json")
 
@@ -69,9 +72,10 @@ def _cargar():
     if _POLIGONOS is not None:
         return _POLIGONOS
     _POLIGONOS = []
-    if not ARCHIVO.exists():
+    fuente = ARCHIVO if ARCHIVO.exists() else INCLUIDO
+    if not fuente.exists():
         return _POLIGONOS
-    datos = json.loads(ARCHIVO.read_text(encoding="utf-8-sig"))
+    datos = json.loads(fuente.read_text(encoding="utf-8-sig"))
     convertir = _conversor(datos)
     for f in datos.get("features", []):
         props = f.get("properties") or f.get("attributes") or {}

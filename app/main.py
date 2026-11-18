@@ -5,7 +5,9 @@ Abrir:     http://127.0.0.1:8000
 
 Al arrancar:
   - busca el dataset (modelo.datos.ubicar); si no hay ninguno, crea datos SINTÉTICOS de demostración;
-  - si no hay modelo entrenado, o el dataset cambió desde el último entrenamiento, entrena de nuevo.
+  - si no hay modelo entrenado, o el dataset cambió desde el último entrenamiento, entrena de nuevo;
+  - inicia el ciclo automático de recolección (app/automatizacion.py), que recolecta, revisa cambios,
+    versiona el dataset y reentrena; cuando publica un corte nuevo, la app lo carga sin reiniciarse.
 """
 import json
 import logging
@@ -29,35 +31,73 @@ from limpieza.normalizar import LOCALIDADES
 from modelo import datos as D
 from modelo import demo, entrenar, estimar
 
+from .automatizacion import Orquestador
+
 logging.basicConfig(level=os.environ.get("VIVIENDA_LOG", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("vivienda")
 ESTATICOS = pathlib.Path(__file__).parent / "static"
 ESTADO: dict = {}
+UMBRAL = 0.10        # ±10 % frente al precio esperado = "en línea con su zona"
 
 
 def preparar_estado() -> None:
+    """Carga dataset y modelo y precalcula los resúmenes. Arma todo aparte y lo publica al final:
+    las solicitudes que llegan mientras tanto siguen viendo los datos anteriores completos."""
     ruta, tipo = D.ubicar()
     if ruta is None:
         log.warning("No hay dataset en datos/. Se crean datos SINTÉTICOS de demostración.")
         demo.main([])
         ruta, tipo = D.ubicar()
+    huella = D.huella(ruta)
     art = estimar.cargar_modelo()
-    if art is None or art.get("sha256") != D.huella(ruta):
+    if art is None or art.get("sha256") != huella:
         log.warning("Entrenando el modelo con %s ...", ruta.name)
         entrenar.entrenar(ruta, tipo)
         art = estimar.cargar_modelo()
-    ESTADO.update(df=D.cargar(ruta), tipo=tipo, ruta=ruta, art=art, arranque=time.time(),
-                  metricas=json.loads(entrenar.METRICAS.read_text(encoding="utf-8")))
-    # Los datos no cambian hasta el próximo arranque: el resumen del mercado se calcula una sola vez.
-    ESTADO["mercado"] = calcular_mercado(ESTADO["df"])
-    log.info("Listo: %s (%s), %d avisos, modelo %s", ruta.name, tipo, len(ESTADO["df"]), art["nombre"])
+    df = comparar_con_esperado(D.cargar(ruta), art)
+    nuevo = {"df": df, "tipo": tipo, "ruta": ruta, "huella": huella, "art": art,
+             "metricas": json.loads(entrenar.METRICAS.read_text(encoding="utf-8")),
+             "mercado": calcular_mercado(df)}
+    nuevo["zonas"] = calcular_zonas(df, art)
+    ESTADO.update(nuevo)
+    ESTADO.setdefault("arranque", time.time())
+    log.info("Listo: %s (%s), %d avisos, modelo %s", ruta.name, tipo, len(df), art["nombre"])
+
+
+def recargar_si_cambio() -> None:
+    """La llama el orquestador: si el ciclo publicó un dataset nuevo, la app lo adopta."""
+    ruta, _ = D.ubicar()
+    if ruta is None or "ruta" not in ESTADO:
+        return
+    if ruta != ESTADO["ruta"] or D.huella(ruta) != ESTADO["huella"]:
+        log.info("Dataset nuevo (%s): recargando datos y modelo", ruta.name)
+        preparar_estado()
+
+
+ORQUESTADOR = Orquestador(recargar_si_cambio)
 
 
 @asynccontextmanager
 async def ciclo(app: FastAPI):
     preparar_estado()
+    ORQUESTADOR.iniciar()
     yield
+    ORQUESTADOR.detener()
+
+
+def comparar_con_esperado(df: pd.DataFrame, art: dict) -> pd.DataFrame:
+    """Precio esperado de cada aviso según el modelo, calculado sin haber visto ese aviso
+    (validación cruzada al entrenar), y su diferencia porcentual frente al precio pedido."""
+    esperados = art.get("esperados")
+    if esperados is not None and len(esperados) == len(df):
+        df["precio_esperado"] = np.asarray(esperados, float)
+    else:   # modelo de una versión anterior: se predice, avisando que es dentro de muestra
+        df["precio_esperado"] = art["modelo"].predict(entrenar.preparar(df))
+    df["diferencia_pct"] = df["precio"] / df["precio_esperado"] - 1
+    df["comparacion"] = np.select([df["diferencia_pct"] < -UMBRAL, df["diferencia_pct"] > UMBRAL],
+                                  ["debajo", "encima"], "en_linea")
+    return df
 
 
 app = FastAPI(title="Precio de apartamentos en Bogotá", version="1.1.0", lifespan=ciclo,
@@ -86,7 +126,8 @@ async def registro_y_seguridad(request: Request, call_next):
         respuesta.headers["Content-Security-Policy"] = CSP
     if request.url.path.startswith("/api/"):
         respuesta.headers.setdefault("Cache-Control", "no-store")
-        log.info("%s %s %d %.1fms rid=%s", request.method, request.url.path, respuesta.status_code, ms, rid)
+        nivel = logging.DEBUG if request.url.path == "/api/automatizacion" else logging.INFO  # se consulta cada pocos segundos
+        log.log(nivel, "%s %s %d %.1fms rid=%s", request.method, request.url.path, respuesta.status_code, ms, rid)
     return respuesta
 
 
@@ -109,7 +150,8 @@ def url_segura(u) -> str | None:
 
 def aviso(r) -> dict:
     d = {k: limpio(r.get(k)) for k in ["precio", "area_m2", "precio_m2", "habitaciones", "banos", "estrato",
-                                       "parqueaderos", "antiguedad", "localidad", "barrio"]}
+                                       "parqueaderos", "antiguedad", "localidad", "barrio", "precio_esperado",
+                                       "diferencia_pct", "comparacion", "precio_anterior"]}
     d["url_origen"] = url_segura(r.get("url_origen"))
     return d
 
@@ -170,6 +212,11 @@ def api_estimar(e: Entrada):
         "percentil_m2": round(float((mismo < res["precio_m2"]).mean()) * 100) if len(mismo) else None,
     }
     res["similares"] = [aviso(r) for r in estimar.similares(df, datos).to_dict("records")]
+    z = next((z for z in ESTADO["zonas"]["localidades"] if z["nombre"] == e.localidad and z["n"]), None)
+    res["zona"] = None if z is None else {
+        "localidad": z["nombre"], "n": z["n"], "mediana_m2": z["mediana_m2"],
+        "diferencia_m2_pct": res["precio_m2"] / z["mediana_m2"] - 1, "p10_precio": z["p10_precio"],
+        "p90_precio": z["p90_precio"]}
     res["modelo"] = ESTADO["art"]["nombre"]
     res["demo"] = ESTADO["tipo"] == "demo"
     return res
@@ -204,24 +251,110 @@ def calcular_mercado(df: pd.DataFrame) -> dict:
     dispersion = [{"area": float(r.area_m2), "precio": float(r.precio),
                    "estrato": None if pd.isna(r.estrato) else int(r.estrato)} for r in muestra.itertuples()]
     geo = muestra.dropna(subset=["latitud", "longitud"])
+    geo = df.dropna(subset=["latitud", "longitud"])
+    if len(geo) > 5000:
+        geo = geo.sample(5000, random_state=2)
     mapa = [{"lat": float(r.latitud), "lon": float(r.longitud), "m2": float(r.precio_m2), "precio": float(r.precio),
-             "area": float(r.area_m2), "localidad": limpio(r.localidad)} for r in geo.itertuples()]
+             "area": float(r.area_m2), "localidad": limpio(r.localidad), "barrio": limpio(r.barrio),
+             "estrato": None if pd.isna(r.estrato) else int(r.estrato), "url": url_segura(r.url_origen),
+             "diferencia_pct": round(float(r.diferencia_pct), 4), "comparacion": r.comparacion}
+            for r in geo.itertuples()]
     return {"estratos": estratos, "estratos_omitidos": omitidos, "localidades": loc.to_dict("records"), "dispersion": dispersion, "mapa": mapa,
             "resumen": {"avisos": len(df), "mediana_precio": float(df["precio"].median()),
                         "mediana_m2": float(df["precio_m2"].median()), "mediana_area": float(df["area_m2"].median()),
                         "con_coordenadas": int(len(df.dropna(subset=["latitud", "longitud"])))}}
 
 
+# ---------------------------------------------------------------- zonas
+
+def estadisticas(g: pd.DataFrame) -> dict:
+    p, m = g["precio"], g["precio_m2"]
+    return {"n": int(len(g)), "promedio_precio": float(p.mean()), "mediana_precio": float(p.median()),
+            "p10_precio": float(p.quantile(0.1)), "p90_precio": float(p.quantile(0.9)),
+            "promedio_m2": float(m.mean()), "mediana_m2": float(m.median()),
+            "p10_m2": float(m.quantile(0.1)), "p90_m2": float(m.quantile(0.9)),
+            "mediana_area": float(g["area_m2"].median()),
+            "por_debajo_pct": float((g["comparacion"] == "debajo").mean()),
+            "por_encima_pct": float((g["comparacion"] == "encima").mean())}
+
+
+def tipico_de(g: pd.DataFrame, nombre: str, art: dict) -> dict:
+    """Valor estimado de un apartamento típico de la zona: área, habitaciones, baños,
+    parqueaderos y estrato más comunes allí, pasados por el modelo con su rango."""
+    def mediana(c):
+        v = g[c].median()
+        return None if pd.isna(v) else int(round(v))
+    estrato_moda = g["estrato"].mode()
+    datos = {"area_m2": float(round(g["area_m2"].median())), "localidad": nombre,
+             "estrato": int(estrato_moda.iat[0]) if len(estrato_moda) else 3,
+             "habitaciones": mediana("habitaciones"), "banos": mediana("banos"),
+             "parqueaderos": mediana("parqueaderos"), "antiguedad": mediana("antiguedad")}
+    r = estimar.estimar(art, datos)
+    return {"datos": datos, "precio": r["precio"], "minimo": r["minimo"], "maximo": r["maximo"]}
+
+
+def calcular_zonas(df: pd.DataFrame, art: dict) -> dict:
+    ciudad = estadisticas(df)
+    filas = []
+    for nombre in LOCALIDADES + ["Sumapaz"]:
+        g = df[df["localidad"] == nombre]
+        if len(g) == 0:
+            filas.append({"nombre": nombre, "n": 0})
+            continue
+        z = {"nombre": nombre, **estadisticas(g)}
+        z["vs_ciudad_pct"] = z["mediana_m2"] / ciudad["mediana_m2"] - 1
+        z["suficiente"] = len(g) >= 10
+        filas.append(z)
+    con_datos = sorted((z for z in filas if z["n"] >= 3), key=lambda z: -z["mediana_m2"])
+    for i, z in enumerate(con_datos, 1):
+        z["puesto"] = i
+    return {"ciudad": ciudad, "localidades": filas, "con_ranking": len(con_datos), "umbral": UMBRAL}
+
+
+@app.get("/api/zonas")
+def api_zonas():
+    return ESTADO["zonas"]
+
+
+@app.get("/api/zonas/{nombre}")
+def api_zona(nombre: str):
+    z = next((z for z in ESTADO["zonas"]["localidades"] if z["nombre"] == nombre), None)
+    if z is None:
+        raise HTTPException(404, "Localidad desconocida.")
+    df = ESTADO["df"]
+    g = df[df["localidad"] == nombre]
+    if len(g) == 0:
+        return {"zona": z, "barrios": [], "tipico": None, "debajo": [], "encima": []}
+    barrios = []
+    for b, gb in g.dropna(subset=["barrio"]).groupby("barrio"):
+        fila = {"barrio": b, "n": int(len(gb)), "mediana_m2": float(gb["precio_m2"].median()),
+                "mediana_precio": float(gb["precio"].median())}
+        fila["vs_localidad_pct"] = fila["mediana_m2"] / z["mediana_m2"] - 1
+        barrios.append(fila)
+    barrios.sort(key=lambda b: (-b["n"], b["barrio"]))
+    orden = g.sort_values("diferencia_pct")
+    return {"zona": z, "barrios": barrios[:40],
+            "tipico": tipico_de(g, nombre, ESTADO["art"]),
+            "debajo": [aviso(r) for r in orden[orden["comparacion"] == "debajo"].head(5).to_dict("records")],
+            "encima": [aviso(r) for r in orden[orden["comparacion"] == "encima"].tail(5).iloc[::-1].to_dict("records")]}
+
+
 # ---------------------------------------------------------------- avisos
 
 @app.get("/api/avisos")
 def api_avisos(localidad: str | None = None, estrato: int | None = Query(None, ge=1, le=6),
-               precio_max: float | None = None, area_min: float | None = None,
-               orden: Literal["precio", "-precio", "precio_m2", "-precio_m2", "area_m2", "-area_m2"] = "precio",
+               precio_max: float | None = None, area_min: float | None = None, barrio: str | None = None,
+               comparacion: Literal["debajo", "en_linea", "encima"] | None = None,
+               orden: Literal["precio", "-precio", "precio_m2", "-precio_m2", "area_m2", "-area_m2",
+                              "diferencia_pct", "-diferencia_pct"] = "precio",
                pagina: int = Query(1, ge=1), por_pagina: int = Query(25, ge=5, le=100)):
     df = ESTADO["df"]
     if localidad:
         df = df[df["localidad"] == localidad]
+    if barrio:
+        df = df[df["barrio"] == barrio]
+    if comparacion:
+        df = df[df["comparacion"] == comparacion]
     if estrato:
         df = df[df["estrato"] == estrato]
     if precio_max:
@@ -234,6 +367,32 @@ def api_avisos(localidad: str | None = None, estrato: int | None = Query(None, g
     pag = df.iloc[(pagina - 1) * por_pagina: pagina * por_pagina]
     return {"total": total, "pagina": pagina, "por_pagina": por_pagina,
             "avisos": [aviso(r) for r in pag.to_dict("records")]}
+
+
+# ---------------------------------------------------------------- automatización
+
+def es_local(request: Request) -> bool:
+    token = os.environ.get("VIVIENDA_TOKEN_ADMIN")
+    if token and request.headers.get("x-token-admin") == token:
+        return True
+    return bool(request.client) and request.client.host in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+@app.get("/api/automatizacion")
+def api_automatizacion(request: Request):
+    return {**ORQUESTADOR.estado(), "puede_ejecutar": es_local(request),
+            "dataset": {"archivo": ESTADO["ruta"].name, "tipo": ESTADO["tipo"], "avisos": len(ESTADO["df"])}}
+
+
+@app.post("/api/automatizacion/ejecutar")
+def api_automatizacion_ejecutar(request: Request):
+    """Solo desde el mismo computador (o con VIVIENDA_TOKEN_ADMIN): nadie de afuera dispara visitas al portal."""
+    if not es_local(request):
+        raise HTTPException(403, "Solo se puede iniciar un ciclo desde el computador donde corre la aplicación.")
+    ok, mensaje = ORQUESTADOR.ejecutar_ahora()
+    if not ok:
+        raise HTTPException(409, mensaje)
+    return {"mensaje": mensaje}
 
 
 # ---------------------------------------------------------------- modelo

@@ -84,12 +84,16 @@ def pliegues(n: int) -> KFold:
     return KFold(n_splits=max(2, min(5, n // 3)), shuffle=True, random_state=SEMILLA)
 
 
-def cuantil_conformal(modelo, X, y) -> float:
-    """Ancho del rango en escala logarítmica, calculado con predicciones fuera de muestra."""
+def cuantil_conformal(modelo, X, y, con_predicciones: bool = False):
+    """Ancho del rango en escala logarítmica, calculado con predicciones fuera de muestra.
+
+    Con con_predicciones=True devuelve también esas predicciones: el precio que el modelo esperaba
+    para cada aviso sin haberlo visto al entrenar. La app las usa para decir si un aviso está por
+    encima o por debajo de lo esperado sin hacerse trampa con avisos memorizados."""
     oof = cross_val_predict(clone(modelo), X, y, cv=pliegues(len(y)))
     r = np.sort(np.abs(np.log(y) - np.log(np.clip(oof, 1, None))))
     k = min(len(r) - 1, math.ceil((len(r) + 1) * NIVEL_RANGO) - 1)
-    return float(r[k])
+    return (float(r[k]), oof) if con_predicciones else float(r[k])
 
 
 def dominio(df: pd.DataFrame, X: pd.DataFrame) -> dict:
@@ -136,7 +140,7 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     prueba[mejor["modelo"]]["cobertura_rango"] = round(float(dentro.mean()), 3)
 
     final = clone(elegido).fit(X, y)
-    q = cuantil_conformal(elegido, X, y)
+    q, esperados = cuantil_conformal(elegido, X, y, con_predicciones=True)
 
     metricas = {
         "fecha": dt.datetime.now().isoformat(timespec="seconds"),
@@ -154,6 +158,7 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     }
     ARTEFACTOS.mkdir(exist_ok=True)
     joblib.dump({"modelo": final, "nombre": mejor["modelo"], "q_log": q, "referencia": referencia(X),
+                 "esperados": [round(float(v)) for v in esperados],
                  "dominio": metricas["dominio"], "sha256": metricas["dataset"]["sha256"]}, MODELO)
     METRICAS.write_text(json.dumps(metricas, ensure_ascii=False, indent=2), encoding="utf-8")
     registrar_mlflow(metricas)

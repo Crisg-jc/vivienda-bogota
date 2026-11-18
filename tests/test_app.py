@@ -19,6 +19,7 @@ def cliente(tmp_path_factory):
     mp.setattr(entrenar, "MODELO", raiz / "artefactos" / "modelo.joblib")
     mp.setattr(entrenar, "METRICAS", raiz / "artefactos" / "metricas.json")
     mp.delenv("VIVIENDA_DATASET", raising=False)
+    mp.setenv("VIVIENDA_AUTOMATICO", "0")   # las pruebas nunca visitan portales
     from modelo import estimar
     mp.setattr(estimar, "MODELO", entrenar.MODELO)
     import app.main as principal
@@ -159,3 +160,32 @@ def test_inferencia_en_un_solo_hilo():
     m = E.candidatos(40)["Bosque aleatorio"].fit(X, [1e8, 2e8, 3e8, 4e8])
     ES.un_hilo(m)
     assert m.regressor_.named_steps["reg"].n_jobs == 1
+
+
+def test_zonas_resumen_y_detalle(cliente):
+    c, _ = cliente
+    z = c.get("/api/zonas").json()
+    nombres = {l["nombre"] for l in z["localidades"]}
+    assert len(nombres) == 20 and "Sumapaz" in nombres
+    con = [l for l in z["localidades"] if l["n"] >= 3]
+    assert all(l["p10_precio"] <= l["mediana_precio"] <= l["p90_precio"] for l in con)
+    assert sorted(l["puesto"] for l in con) == list(range(1, len(con) + 1))
+    d = c.get("/api/zonas/Suba").json()
+    assert d["tipico"]["minimo"] <= d["tipico"]["precio"] <= d["tipico"]["maximo"]
+    assert all(a["comparacion"] == "debajo" for a in d["debajo"])
+    assert c.get("/api/zonas/Narnia").status_code == 404
+
+
+def test_avisos_frente_a_lo_esperado(cliente):
+    c, _ = cliente
+    r = c.get("/api/avisos", params={"comparacion": "debajo", "orden": "diferencia_pct", "por_pagina": 20}).json()
+    assert r["total"] > 0
+    difs = [a["diferencia_pct"] for a in r["avisos"]]
+    assert all(d < -0.10 for d in difs) and difs == sorted(difs)
+
+
+def test_automatizacion_apagada_en_pruebas(cliente):
+    c, _ = cliente
+    a = c.get("/api/automatizacion").json()
+    assert a["situacion"] == "apagado" and "base" in a
+    assert c.post("/api/automatizacion/ejecutar").status_code == 409

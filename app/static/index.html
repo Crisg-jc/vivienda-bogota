@@ -20,11 +20,12 @@
     </a>
     <nav class="barra__nav" aria-label="Secciones">
       <a href="#estimar">Estimar</a>
+      <a href="#zonas">Zonas</a>
       <a href="#mercado">Mercado</a>
       <a href="#avisos">Avisos</a>
       <a href="#modelo">Modelo</a>
     </nav>
-    <p class="barra__datos" id="insignia-datos">Cargando datos…</p>
+    <a class="barra__datos" id="insignia-datos" href="#actualizacion"><span class="pulso" aria-hidden="true"></span><span id="insignia-texto">Cargando datos…</span></a>
   </header>
 
   <details class="aviso-demo" id="aviso-demo" hidden>
@@ -113,6 +114,7 @@
           <div class="metro">
             <p class="metro__cifra"><span id="r-m2"></span> <span class="metro__unidad">por m²</span></p>
             <p class="metro__contexto" id="r-contexto"></p>
+            <p class="metro__contexto" id="r-zona" hidden></p>
           </div>
 
           <ul class="advertencias" id="r-advertencias"></ul>
@@ -139,8 +141,73 @@
       </div>
     </section>
 
+    <!-- ============================================================ ZONAS -->
+    <section class="seccion seccion--banda" id="zonas" aria-labelledby="t-zonas">
+      <header class="seccion__cabeza">
+        <h2 class="seccion__titulo" id="t-zonas">Precios por zona</h2>
+        <p class="seccion__entrada" id="z-entrada">Elija una localidad en el mapa o en la lista para ver cuánto se pide allí y cómo se compara con el resto de Bogotá.</p>
+      </header>
+
+      <div class="zonas">
+        <div class="zonas__mapa">
+          <div class="mapa-barra">
+            <div class="vistas" role="group" aria-label="Encuadre del mapa">
+              <button type="button" data-vista="colombia">Colombia</button>
+              <button type="button" data-vista="bogota" aria-pressed="true">Bogotá</button>
+              <button type="button" data-vista="localidad" disabled>Localidad</button>
+            </div>
+            <label class="interruptor"><input type="checkbox" id="z-puntos" checked> Mostrar avisos</label>
+          </div>
+          <div id="mapa-zonas" class="mapa mapa--zonas" role="region" aria-label="Mapa de Bogotá por localidades"></div>
+          <div class="mapa-leyendas">
+            <div class="escala-mapa">
+              <span>Metro cuadrado mediano</span>
+              <span id="z-escala-min"></span><i aria-hidden="true"></i><span id="z-escala-max"></span>
+              <span class="sin-datos"><i aria-hidden="true"></i>Pocos avisos</span>
+            </div>
+            <div class="leyenda" id="z-leyenda-puntos">
+              <span><i class="pt pt--debajo"></i>Por debajo de lo esperado</span>
+              <span><i class="pt pt--en_linea"></i>En línea</span>
+              <span><i class="pt pt--encima"></i>Por encima</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tarjeta zona" id="panel-zona" aria-live="polite">
+          <label class="zona__elegir">Localidad
+            <select id="z-localidad"><option value="">Elija una localidad</option></select>
+          </label>
+          <div id="z-vacio" class="zona__vacio">
+            <p>Toque una localidad en el mapa o elíjala en la lista. Verá el precio promedio, el metro cuadrado, el rango de precios, los barrios y los avisos que están por debajo de lo esperado.</p>
+          </div>
+          <div id="z-contenido" hidden>
+            <h3 class="zona__nombre" id="z-nombre"></h3>
+            <p class="zona__puesto" id="z-puesto"></p>
+            <dl class="cifras" id="z-cifras"></dl>
+            <div class="zona__tipico" id="z-tipico"></div>
+            <h4>Barrios</h4>
+            <div class="desliza" tabindex="0" role="region" aria-label="Barrios de la localidad">
+              <table class="tabla tabla--compacta">
+                <thead><tr><th>Barrio</th><th class="num">Avisos</th><th class="num">Por m²</th><th class="num">Frente a la localidad</th></tr></thead>
+                <tbody id="z-barrios"></tbody>
+              </table>
+            </div>
+            <h4>Más por debajo de lo esperado</h4>
+            <ul class="lista-avisos" id="z-debajo"></ul>
+            <button class="boton-texto" id="z-ver-avisos" type="button">Ver todos los avisos de esta localidad</button>
+          </div>
+        </div>
+      </div>
+
+      <figure class="grafico comparar">
+        <h3>Comparar localidades</h3>
+        <p class="como-leer">El punto es el metro cuadrado mediano y la línea va del 10 % más barato al 10 % más caro de los avisos de cada localidad. La línea vertical es la mediana de Bogotá. Toque una localidad para verla en el mapa.</p>
+        <div id="z-ranking" class="ranking"></div>
+      </figure>
+    </section>
+
     <!-- ============================================================ MERCADO -->
-    <section class="seccion seccion--banda" id="mercado" aria-labelledby="t-mercado">
+    <section class="seccion" id="mercado" aria-labelledby="t-mercado">
       <header class="seccion__cabeza">
         <h2 class="seccion__titulo" id="t-mercado">Lo que muestran los avisos</h2>
         <p class="seccion__entrada" id="m-resumen">Cargando…</p>
@@ -152,23 +219,6 @@
           <p class="como-leer">Precio del metro cuadrado según estrato. Cada caja reúne la mitad central de los avisos; la raya gruesa es la mediana y los bigotes llegan hasta los valores habituales. A la derecha de cada caja, los avisos uno por uno.</p>
           <svg id="g-cajas" class="lienzo" role="img" aria-label="Diagrama de caja del precio por metro cuadrado según estrato"></svg>
         </figure>
-
-        <div class="grupo-ubicacion">
-          <h3>¿Y la ubicación?</h3>
-          <p class="como-leer">El metro cuadrado mediano por localidad y dónde están los avisos. En el mapa, el color va del verde claro (más barato) al ladrillo (más caro); los vacíos son zonas sin avisos en los datos, no zonas sin vivienda.</p>
-          <div class="ubicacion">
-            <figure class="grafico">
-              <figcaption class="sr">Metro cuadrado mediano por localidad</figcaption>
-              <div id="g-localidades" class="barras"></div>
-              <p class="nota-grafico">Entre paréntesis, cuántos avisos hay. Las barras rayadas tienen menos de 10 y su cifra es poco estable.</p>
-            </figure>
-            <figure class="grafico">
-              <figcaption class="sr">Mapa de avisos</figcaption>
-              <div id="mapa" class="mapa" role="region" aria-label="Mapa de avisos"></div>
-              <div class="escala-mapa" aria-hidden="true"><span>Más barato por m²</span><i></i><span>Más caro</span></div>
-            </figure>
-          </div>
-        </div>
 
         <figure class="grafico grafico--completo">
           <h3>¿Y el tamaño?</h3>
@@ -183,7 +233,7 @@
     <section class="seccion" id="avisos" aria-labelledby="t-avisos">
       <header class="seccion__cabeza">
         <h2 class="seccion__titulo" id="t-avisos">Explorar los avisos</h2>
-        <p class="seccion__entrada">Revise uno por uno los avisos con los que se entrenó el modelo. Cada fila enlaza al aviso original cuando existe.</p>
+        <p class="seccion__entrada">Revise uno por uno los avisos con los que se entrenó el modelo. "Frente a lo esperado" compara el precio pedido con lo que el modelo estima para ese apartamento sin haberlo visto: más de 10 % por debajo o por encima.</p>
       </header>
       <form class="filtros" id="filtros">
         <label>Localidad
@@ -198,8 +248,11 @@
         <label>Área mínima
           <select name="area_min"><option value="">Cualquiera</option><option value="40">40 m²</option><option value="60">60 m²</option><option value="80">80 m²</option><option value="120">120 m²</option></select>
         </label>
+        <label>Frente a lo esperado
+          <select name="comparacion"><option value="">Todos</option><option value="debajo">Por debajo</option><option value="en_linea">En línea</option><option value="encima">Por encima</option></select>
+        </label>
         <label>Ordenar por
-          <select name="orden"><option value="precio">Precio, de menor a mayor</option><option value="-precio">Precio, de mayor a menor</option><option value="precio_m2">Metro cuadrado, de menor a mayor</option><option value="-precio_m2">Metro cuadrado, de mayor a menor</option><option value="-area_m2">Área, de mayor a menor</option></select>
+          <select name="orden"><option value="precio">Precio, de menor a mayor</option><option value="diferencia_pct">Más por debajo de lo esperado</option><option value="-precio">Precio, de mayor a menor</option><option value="precio_m2">Metro cuadrado, de menor a mayor</option><option value="-precio_m2">Metro cuadrado, de mayor a menor</option><option value="-area_m2">Área, de mayor a menor</option></select>
         </label>
       </form>
       <div class="conteo">
@@ -208,7 +261,7 @@
       </div>
       <div class="tabla-marco" tabindex="0" role="region" aria-label="Tabla de avisos">
         <table class="tabla">
-          <thead><tr><th>Precio</th><th>Por m²</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th><span class="sr">Enlace</span></th></tr></thead>
+          <thead><tr><th>Precio</th><th>Frente a lo esperado</th><th>Por m²</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th><span class="sr">Enlace</span></th></tr></thead>
           <tbody id="a-filas"></tbody>
         </table>
       </div>
@@ -216,6 +269,31 @@
         <button class="boton boton--sutil" id="a-anterior" type="button">Anteriores</button>
         <span id="a-pagina"></span>
         <button class="boton boton--sutil" id="a-siguiente" type="button">Siguientes</button>
+      </div>
+    </section>
+
+    <!-- ============================================================ ACTUALIZACIÓN -->
+    <section class="seccion" id="actualizacion" aria-labelledby="t-actualizacion">
+      <header class="seccion__cabeza">
+        <h2 class="seccion__titulo" id="t-actualizacion">Actualización de los datos</h2>
+        <p class="seccion__entrada">La aplicación recolecta, revisa y limpia los avisos sola: al abrirse y luego cada pocas horas. Cada aviso guardado se vuelve a revisar una vez por semana para detectar cambios de precio y retiros.</p>
+      </header>
+      <div class="actualizacion">
+        <div class="tarjeta estado-ciclo" id="ac-estado" aria-live="polite">
+          <p class="estado-ciclo__situacion" id="ac-situacion">Consultando…</p>
+          <p class="estado-ciclo__detalle" id="ac-detalle"></p>
+          <div class="progreso" id="ac-progreso" hidden><span></span></div>
+          <button class="boton" id="ac-ejecutar" type="button" hidden>Actualizar ahora</button>
+          <p class="como-leer" id="ac-nota"></p>
+        </div>
+        <dl class="cifras cifras--base" id="ac-base"></dl>
+      </div>
+      <h3 class="subtitulo">Últimos ciclos</h3>
+      <div class="desliza" tabindex="0" role="region" aria-label="Últimos ciclos de actualización">
+        <table class="tabla">
+          <thead><tr><th>Inicio</th><th>Resultado</th><th class="num">Enlaces nuevos</th><th class="num">Avisos nuevos</th><th class="num">Revisados</th><th class="num">Con cambios</th><th class="num">Retirados</th><th class="num">Dataset</th></tr></thead>
+          <tbody id="ac-ejecuciones"></tbody>
+        </table>
       </div>
     </section>
 

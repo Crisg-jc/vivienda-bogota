@@ -13,6 +13,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
+from limpieza import geo
 from limpieza.normalizar import LOCALIDADES
 
 from .datos import DEMO
@@ -28,7 +29,24 @@ ZONAS = {
     "La Candelaria": (3, 4.597, -74.072), "Rafael Uribe Uribe": (2, 4.570, -74.115),
     "Ciudad Bolívar": (2, 4.540, -74.150),
 }
+# Algunos barrios reales por localidad: solo para que el análisis por barrio tenga qué mostrar.
+BARRIOS = {
+    "Usaquén": ["Cedritos", "Santa Bárbara", "Usaquén", "Bella Suiza"], "Chapinero": ["Chicó", "Rosales", "Chapinero Alto"],
+    "Suba": ["Niza", "Colina Campestre", "Pinar de Suba", "Mazurén"], "Engativá": ["Normandía", "Bochica", "Villa Luz"],
+    "Kennedy": ["Castilla", "Timiza", "Patio Bonito"], "Fontibón": ["Modelia", "Hayuelos", "Fontibón Centro"],
+    "Teusaquillo": ["Galerías", "La Soledad", "Palermo"], "Barrios Unidos": ["Polo Club", "La Castellana"],
+    "Bosa": ["Bosa Centro", "El Recreo"], "Puente Aranda": ["Ciudad Montes", "Galán"],
+}
 M2_ESTRATO = {1: 2.6e6, 2: 3.4e6, 3: 4.6e6, 4: 6.6e6, 5: 8.6e6, 6: 10.8e6}  # supuestos de demostración
+
+
+def punto_en(loc: str, lat: float, lon: float, rng) -> tuple[float, float]:
+    """Un punto al azar DENTRO del límite real de la localidad (cerca de su zona construida)."""
+    for _ in range(200):
+        y, x = lat + rng.normal(0, 0.012), lon + rng.normal(0, 0.010)
+        if geo.localidad_por_coordenadas(y, x) == loc:
+            return round(y, 6), round(x, 6)
+    return round(lat, 6), round(lon, 6)
 
 
 def generar(n: int, semilla: int) -> pd.DataFrame:
@@ -46,14 +64,16 @@ def generar(n: int, semilla: int) -> pd.DataFrame:
         antig = float(np.clip(rng.gamma(2.0, 7.0), 0, 60))
         m2 = M2_ESTRATO[estrato] * (1 - 0.004 * antig) * (1 + 0.04 * parq) * rng.lognormal(0, 0.14)
         precio = round(m2 * area, -6)
+        py, px = punto_en(loc, lat, lon, rng)
         if not 80e6 <= precio <= 3e9:
             continue
         filas.append({
             "precio": int(precio), "area_m2": round(area, 1), "habitaciones": hab, "banos": banos,
-            "estrato": estrato, "parqueaderos": parq, "localidad": loc, "barrio": None,
+            "estrato": estrato, "parqueaderos": parq, "localidad": loc,
             "antiguedad": round(antig), "administracion": int(round(area * (2500 + 900 * estrato), -3)),
             "piso": int(rng.integers(1, 16)), "estado": "usado" if antig > 1 else "nuevo",
-            "latitud": round(lat + rng.normal(0, 0.012), 6), "longitud": round(lon + rng.normal(0, 0.010), 6),
+            "latitud": py, "longitud": px,
+            "barrio": rng.choice(BARRIOS[loc]) if loc in BARRIOS else None,
             "portal": "demo-sintetico", "fecha_consulta": None, "url_origen": None,
         })
     return pd.DataFrame(filas)

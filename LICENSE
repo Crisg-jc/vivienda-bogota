@@ -24,3 +24,5 @@ SOFTWARE.
 Componentes de terceros incluidos en app/static/vendor/:
 - Leaflet 1.9.4 (BSD 2-Clause), ver app/static/vendor/leaflet/LICENSE
 - Bricolage Grotesque y Public Sans (SIL Open Font License 1.1), ver app/static/vendor/fuentes/
+- Límites de localidades de Bogotá: IDECA / Secretaría Distrital de Planeación, Datos Abiertos Bogotá (CC BY 4.0), en app/static/geo y limpieza/localidades_ideca.geojson
+- Límites de países: Natural Earth vía world-atlas (dominio público), en app/static/geo/region.geojson

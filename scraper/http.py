@@ -11,6 +11,10 @@ class BloqueoDelPortal(Exception):
     """El portal respondió 403/429 o mostró un reto anti-bots: hay que detenerse, no insistir."""
 
 
+class AvisoRetirado(Exception):
+    """El aviso ya no está publicado: el portal respondió 404/410 o redirigió fuera del aviso."""
+
+
 class Robots:
     """Intérprete de robots.txt con soporte de comodines (* y $).
 
@@ -87,6 +91,10 @@ class Cliente:
         self._ultima = time.monotonic()
 
     def get(self, url: str, base: str) -> str:
+        return self.obtener(url, base)[0]
+
+    def obtener(self, url: str, base: str) -> tuple[str, str]:
+        """Devuelve (html, url_final). 404 y 410 se informan como AvisoRetirado."""
         if not self.robots(base).permitido(url):
             raise PermissionError(f"robots.txt no permite {url}")
         for intento in range(self.conf["reintentos"] + 1):
@@ -99,11 +107,13 @@ class Cliente:
                 continue
             if r.status_code in (403, 429):
                 raise BloqueoDelPortal(f"{r.status_code} en {url}")
+            if r.status_code in (404, 410):
+                raise AvisoRetirado(f"{r.status_code} en {url}")
             if r.status_code >= 500 and intento < self.conf["reintentos"]:
                 time.sleep(15 * (intento + 1))
                 continue
             r.raise_for_status()
             if re.search(r"captcha|_Incapsula_Resource|cf-challenge", r.text[:5000], re.I):
                 raise BloqueoDelPortal(f"reto anti-bots en {url}")
-            return r.text
+            return r.text, r.url
         raise RuntimeError(f"sin respuesta válida para {url}")

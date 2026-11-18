@@ -1,6 +1,6 @@
 # Vivienda Bogotá: precio de apartamentos en venta
 
-Aplicación web que estima el **precio de publicación** de un apartamento en venta en Bogotá D.C. y lo compara con avisos parecidos. Incluye todo el flujo del proyecto: recolección de avisos con web scraping controlado, limpieza y versionado del dataset, entrenamiento y comparación de modelos, y una interfaz para consultar el resultado.
+Aplicación web que estima el **precio de publicación** de un apartamento en venta en Bogotá D.C., lo compara con avisos parecidos y analiza los precios por localidad y barrio en un mapa. La recolección de avisos, su revisión semanal, la limpieza, el versionado del dataset y el reentrenamiento del modelo corren solos mientras la aplicación está abierta.
 
 Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Cristian Javier Gómez Castañeda y Camila Andrea Vanegas Ducuara.
 
@@ -10,9 +10,11 @@ Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Crist
 
 ## Qué hace
 
+- **Precios por zona:** mapa real de Colombia, Bogotá y sus 20 localidades, coloreadas por el metro cuadrado mediano. Al elegir una localidad se ven el precio promedio y mediano, el precio por m² frente a Bogotá, el rango de precios, el valor estimado de un apartamento típico, los barrios y los avisos que están por debajo de lo esperado. Debajo, una comparación de todas las localidades.
+- **Actualización automática:** al abrir la aplicación arranca un ciclo que busca avisos nuevos, revisa los ya guardados (cambios de precio, características o retiro) y, si algo cambió, construye un dataset nuevo y reentrena el modelo. La página se actualiza sola.
 - **Estimar:** se describe un apartamento (área, estrato, localidad, habitaciones, baños, parqueaderos, antigüedad) y la aplicación devuelve un precio, un rango probable, el precio por metro cuadrado, qué características suben o bajan el precio y los avisos más parecidos.
 - **Mercado:** un diagrama de caja del precio por m² según estrato, la relación entre área y precio, el m² mediano por localidad y un mapa de los avisos.
-- **Avisos:** una tabla con filtros para revisar los datos uno por uno.
+- **Avisos:** una tabla con filtros para revisar los datos uno por uno, con cuánto está cada aviso por encima o por debajo del precio que el modelo esperaba para él, y si su precio subió o bajó.
 - **Modelo:** las métricas de validación cruzada y de la prueba final, explicadas.
 
 ## Empezar en 3 minutos
@@ -41,6 +43,36 @@ docker compose up --build
 Y abra <http://localhost:8000>. Las carpetas `datos/` y `artefactos/` se comparten con el contenedor, así que los datasets que ponga en `datos/` los usa la aplicación.
 
 El contenedor no corre como administrador (usuario `vivienda`, uid 10001). En Linux, si el contenedor no puede escribir en esas carpetas, deles permiso una vez: `sudo chown -R 10001 datos artefactos`.
+
+## Actualización automática
+
+Mientras la aplicación está abierta, un ciclo (`scraper/ciclo.py`) se ejecuta 30 segundos después de abrirla y luego cada 12 horas:
+
+1. **Listado:** revisa las primeras páginas (ahí aparecen los avisos nuevos) y un tramo de 100 páginas más, que avanza ciclo a ciclo hasta recorrer todo el listado y vuelve a empezar.
+2. **Avisos nuevos:** lee hasta 600 enlaces que nunca se han visitado. Un enlace ya conocido no se duplica.
+3. **Revisión:** vuelve a visitar hasta 300 avisos guardados cuya última visita tiene más de 7 días. Si cambió el precio o una característica, actualiza el registro y guarda el cambio en la tabla `cambios`. Si el aviso ya no existe (404, 410 o redirección), lo marca como retirado: sale del dataset pero conserva su historia.
+4. **Dataset y modelo:** si algo cambió, construye un corte nuevo (solo avisos disponibles) y reentrena. La aplicación lo carga sin reiniciarse.
+
+Las reglas de cortesía son las mismas de la recolección manual: pausa de 4 a 8 segundos por solicitud, robots.txt, y alto total ante 403, 429 o captcha. Tras un bloqueo, el siguiente intento espera 6 horas (12, 24 y hasta 48 si se repite). Sin internet, reintenta en una hora.
+
+**Antes de que empiece a recolectar** (una sola vez):
+
+1. Una persona del equipo lee los términos de uso del portal y, si permiten la extracción, pone en `config/portales.yaml`: `terminos_revisados: true`, su nombre en `revisado_por` y la fecha en `fecha_revision`.
+2. Cambie `CAMBIAR@correo.com` en `user_agent` por un correo real de contacto.
+
+Mientras ningún portal esté autorizado, la sección "Actualización de los datos" de la página lo dice y no se visita nada.
+
+Todo se ajusta en el bloque `automatico:` de `config/portales.yaml` (intervalo, páginas, avisos por ciclo, días entre revisiones). Para apagarlo: `activo: false`, o la variable `VIVIENDA_AUTOMATICO=0`. El avance queda en `datos/estado/ciclo.json`, el registro en `datos/estado/ciclo.log` y cada ciclo en la tabla `ejecuciones`. Un ciclo también se puede lanzar a mano con `python -m scraper.ciclo`, o con el botón "Actualizar ahora" de la página (solo desde el mismo computador).
+
+**El ciclo trabaja solo mientras la aplicación está abierta.** Para que corra aunque nadie la abra, programe `python -m scraper.ciclo` en el Programador de tareas de Windows (o con cron en Linux).
+
+### Traer los datos que ya recolectaron
+
+Si ya usaban el recolector en otra carpeta, no pierdan esos enlaces y avisos:
+
+- **Con SQLite (lo normal si no configuraron PostgreSQL):** copie `datos\vivienda.db` de la carpeta vieja a `datos\` de esta. Al abrir la aplicación, la base recibe sola las columnas nuevas.
+- **Con PostgreSQL:** copie su archivo `.env` a esta carpeta.
+- Copie también los campos `terminos_revisados`, `revisado_por`, `fecha_revision` y `user_agent` de su `config/portales.yaml` anterior.
 
 ## Usar datos reales
 
@@ -74,6 +106,8 @@ El CSV necesita al menos las columnas `precio` y `area_m2`, y debería traer `es
 **Rango de precio.** Se calcula con predicción conformal: con los errores que el modelo comete en avisos que no vio, se busca el ancho que contiene el precio real 8 de cada 10 veces.
 
 **Explicación.** Para cada característica que el usuario informó, se calcula cuánto cambiaría la estimación si esa característica tomara el valor del apartamento típico del dataset. Es una aproximación: los efectos no se suman exactamente.
+
+**Por encima o por debajo de lo esperado.** Al entrenar se guarda, para cada aviso, el precio que el modelo predijo sin haberlo visto (validación cruzada). Un aviso más de 10 % por debajo de ese precio se marca "por debajo de lo esperado"; más de 10 % por encima, "por encima". Usar predicciones fuera de muestra evita que el modelo "apruebe" avisos que memorizó.
 
 **Advertencias.** La aplicación avisa cuando un valor está fuera del rango que el modelo vio al entrenar, o cuando hay menos de 5 avisos de la localidad o del estrato elegidos.
 
@@ -141,7 +175,11 @@ La documentación interactiva está en <http://127.0.0.1:8000/docs>.
 | GET | `/api/estado` | Dataset en uso, modelo elegido y localidades válidas |
 | POST | `/api/estimar` | Precio, rango, explicación y avisos parecidos |
 | GET | `/api/mercado` | Datos de los gráficos del mercado |
-| GET | `/api/avisos` | Avisos con filtros (`localidad`, `estrato`, `precio_max`, `area_min`, `orden`, `pagina`) |
+| GET | `/api/avisos` | Avisos con filtros (`localidad`, `barrio`, `estrato`, `precio_max`, `area_min`, `comparacion`, `orden`, `pagina`) |
+| GET | `/api/zonas` | Resumen por localidad: precios, m², rangos, puesto y comparación con Bogotá |
+| GET | `/api/zonas/{localidad}` | Detalle de una localidad: barrios, apartamento típico y avisos por debajo de lo esperado |
+| GET | `/api/automatizacion` | Estado del ciclo automático, conteos de la base y últimos ciclos |
+| POST | `/api/automatizacion/ejecutar` | Lanza un ciclo ahora (solo desde el mismo computador) |
 | GET | `/api/modelo` | Métricas completas del último entrenamiento |
 
 Ejemplo:
@@ -155,10 +193,11 @@ curl -X POST http://127.0.0.1:8000/api/estimar \
 ## Estructura
 
 ```
-app/                 API (FastAPI) e interfaz web (HTML, CSS y JavaScript sin compilación)
+app/                 API (FastAPI), orquestador del ciclo automático e interfaz web
+  static/geo/        límites de Colombia (Natural Earth) y de las 20 localidades (IDECA, CC BY 4.0)
   static/vendor/     Leaflet y fuentes incluidas, para no depender de CDN
 modelo/              carga del dataset, línea base, entrenamiento, estimación y datos de demostración
-scraper/             recolección: robots.txt, pausas, freno ante bloqueos, extracción
+scraper/             recolección: robots.txt, pausas, freno ante bloqueos, extracción y ciclo automático
 limpieza/            normalización, localidad por coordenadas, deduplicación, versionado
 config/portales.yaml portales, URLs, pausas y control de términos de uso
 sql/schema.sql       esquema de referencia en PostgreSQL
@@ -178,11 +217,11 @@ tests/               pruebas del recolector, la limpieza, el modelo y la API
 
 ```bash
 ruff check .      # estilo y errores probables
-pytest -q         # 32 pruebas
+pytest -q         # 43 pruebas
 ```
 
 GitHub Actions ejecuta las dos en cada cambio, y además construye la imagen de Docker y comprueba que arranque sana (`.github/workflows/pruebas.yml`).
 
 ## Licencia
 
-Código bajo licencia MIT (ver `LICENSE`). Leaflet usa licencia BSD-2 y las fuentes Bricolage Grotesque y Public Sans, SIL Open Font License.
+Código bajo licencia MIT (ver `LICENSE`). Leaflet usa licencia BSD-2; las fuentes Bricolage Grotesque y Public Sans, SIL Open Font License; los límites de las localidades son de IDECA y la Secretaría Distrital de Planeación (Datos Abiertos Bogotá, CC BY 4.0), y los de los países, de Natural Earth (dominio público).

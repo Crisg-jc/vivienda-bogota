@@ -3,6 +3,9 @@
 Uso:
   python -m limpieza.construir_dataset --notas "Corte Sprint 2"
 
+El ciclo automático (scraper/ciclo.py) llama a construir() después de cada recolección.
+Solo entran los avisos que siguen disponibles; los retirados quedan en la base con su historial.
+
 Produce:
   - filas en inmuebles_limpios con version_dataset = N
   - una fila en dataset_versiones con conteos, reglas y suma de verificación SHA-256
@@ -19,7 +22,7 @@ import pathlib
 from collections import Counter
 
 import pandas as pd
-from sqlalchemy import func, insert, select
+from sqlalchemy import insert, or_, select
 
 from scraper import db
 
@@ -171,23 +174,49 @@ def reporte(df, n_crudos, descartes, n_dup, version, suma) -> str:
     return "\n".join(lineas) + "\n"
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--notas", default="")
-    args = ap.parse_args(argv)
-    eng = db.motor()
+def precios_anteriores(c) -> pd.DataFrame:
+    """Último cambio de precio de cada aviso: con él la interfaz muestra si subió o bajó."""
+    t = db.cambios
+    filas = pd.read_sql(select(t.c.url_origen, t.c.fecha, t.c.antes).where(t.c.campo == "precio")
+                        .order_by(t.c.fecha), c)
+    if filas.empty:
+        return pd.DataFrame(columns=["url_origen", "precio_anterior", "fecha_cambio_precio"])
+    filas = filas.groupby("url_origen").tail(1)
+    return pd.DataFrame({"url_origen": filas["url_origen"],
+                         "precio_anterior": filas["antes"].map(nz.precio),
+                         "fecha_cambio_precio": pd.to_datetime(filas["fecha"]).dt.date})
+
+
+def limpiar_versiones_viejas(carpeta: pathlib.Path, conservar: int):
+    cortes = sorted(carpeta.glob("dataset_v*.csv"), key=lambda r: int(r.stem.split("_v")[1]))
+    for r in cortes[:-conservar]:
+        r.unlink(missing_ok=True)
+        r.with_name(r.name.replace("dataset_v", "reporte_calidad_v").replace(".csv", ".md")).unlink(missing_ok=True)
+
+
+def construir(notas: str = "", solo_si_cambia: bool = False, eng=None, conservar: int | None = None):
+    """Construye el corte. Devuelve (versión, ruta del CSV, registros), o None si no hubo cambios."""
+    eng = eng or db.motor()
+    t = db.inmuebles_crudos
     with eng.begin() as c:
-        crudos = pd.read_sql(select(db.inmuebles_crudos), c)
-        version = (c.scalar(select(func.max(db.dataset_versiones.c.version))) or 0) + 1
+        crudos = pd.read_sql(select(t).where(or_(t.c.disponible.is_(None), t.c.disponible.is_(True))), c)
+        anterior = c.execute(select(db.dataset_versiones.c.version, db.dataset_versiones.c.checksum_sha256)
+                             .order_by(db.dataset_versiones.c.version.desc()).limit(1)).first()
+        version = (anterior.version if anterior else 0) + 1
+        previos = precios_anteriores(c)
     if crudos.empty:
-        raise SystemExit("No hay registros en inmuebles_crudos.")
+        raise SystemExit("No hay registros disponibles en inmuebles_crudos.")
     df, descartes = normalizar_crudos(crudos)
     df, n_dup = deduplicar(df)
     suma = checksum(df)
+    salida = RAIZ / "datos"
+    if solo_si_cambia and anterior and anterior.checksum_sha256 == suma \
+            and (salida / f"dataset_v{anterior.version}.csv").exists():
+        return None
     with eng.begin() as c:
         c.execute(insert(db.dataset_versiones), [{
             "version": version, "n_crudos": len(crudos), "n_registros": len(df),
-            "checksum_sha256": suma, "notas": args.notas,
+            "checksum_sha256": suma, "notas": notas,
             "reglas": json.dumps({"reglas": REGLAS, "descartes": dict(descartes),
                                   "duplicados": n_dup}, ensure_ascii=False)}])
         if len(df):
@@ -195,13 +224,24 @@ def main(argv=None):
                               fecha_consulta=pd.to_datetime(df["fecha_consulta"]).dt.date)
             filas = filas.astype(object).where(filas.notna(), None)
             c.execute(insert(db.inmuebles_limpios), filas.to_dict("records"))
-    salida = RAIZ / "datos"
     salida.mkdir(exist_ok=True)
-    df.drop(columns=["crudo_id"]).to_csv(salida / f"dataset_v{version}.csv", index=False, encoding="utf-8-sig")
+    ruta = salida / f"dataset_v{version}.csv"
+    df.drop(columns=["crudo_id"]).merge(previos, on="url_origen", how="left") \
+        .to_csv(ruta, index=False, encoding="utf-8-sig")
     (salida / f"reporte_calidad_v{version}.md").write_text(
         reporte(df, len(crudos), descartes, n_dup, version, suma), encoding="utf-8")
+    if conservar:
+        limpiar_versiones_viejas(salida, conservar)
     print(f"Dataset v{version}: {len(df)} registros limpios de {len(crudos)} crudos "
           f"({n_dup} duplicados). Archivos en datos/.")
+    return version, ruta, len(df)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--notas", default="")
+    args = ap.parse_args(argv)
+    construir(args.notas)
 
 
 if __name__ == "__main__":
