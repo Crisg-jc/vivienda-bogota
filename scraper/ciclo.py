@@ -22,6 +22,7 @@ siguiente ciclo. El avance queda en datos/estado/ciclo.json y cada ciclo en la t
 import argparse
 import datetime as dt
 import json
+import logging
 import os
 import re
 import time
@@ -36,6 +37,7 @@ from .extraer import CAMPOS, enlaces_detalle, extraer
 from .http import AvisoRetirado, BloqueoDelPortal, Cliente
 from .recolectar import RAIZ, cargar_conf
 
+log = logging.getLogger("vivienda.ciclo")
 CARPETA = RAIZ / "datos" / "estado"
 ESTADO = CARPETA / "ciclo.json"
 CANDADO = CARPETA / "ciclo.lock"
@@ -64,7 +66,10 @@ def ahora() -> dt.datetime:
 def leer_estado() -> dict:
     try:
         return json.loads(ESTADO.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        log.warning("No se pudo leer %s (%s): se toma como vacío", ESTADO, e)
         return {}
 
 
@@ -85,14 +90,18 @@ def tomar_candado(max_minutos: int) -> bool:
     if CANDADO.exists():
         edad = time.time() - CANDADO.stat().st_mtime
         if edad < 10 * 60:
+            log.info("Otro ciclo tiene el candado (renovado hace %.0fs): no se inicia otro", edad)
             return False          # otro ciclo sigue en curso
+        log.warning("Candado abandonado (%.0f min sin renovarse, ciclo cortado): se libera", edad / 60)
         CANDADO.unlink(missing_ok=True)
     CANDADO.write_text(f"{os.getpid()} {ahora().isoformat()}", encoding="utf-8")
+    log.debug("Candado tomado por el proceso %s", os.getpid())
     return True
 
 
 def soltar_candado():
     CANDADO.unlink(missing_ok=True)
+    log.debug("Candado liberado")
 
 
 # ---------------------------------------------------------------- el ciclo
@@ -115,6 +124,7 @@ class Ciclo:
                   "retirados": 0, "errores": 0}
 
     def progreso(self, fase: str, detalle: str = ""):
+        log.debug("Progreso: %s | %s | %s", fase, detalle, self.n)
         escribir_estado(estado="en_curso", fase=fase, detalle=detalle, contadores=self.n)
         if CANDADO.exists():
             os.utime(CANDADO)     # "sigo vivo"
@@ -127,8 +137,11 @@ class Ciclo:
         tramo = list(range(cursor, cursor + self.aj["paginas_por_ciclo"]))
         vacias, max_vacias = 0, self.conf["general"].get("max_paginas_vacias_seguidas", 5)
         siguiente = cursor
+        log.info("Listado de %s: páginas 1-%d y tramo %d-%d", nombre, len(iniciales), tramo[0], tramo[-1])
         for n in iniciales + tramo:
             if self.presupuesto.agotado():
+                log.warning("Se acabó el tiempo del ciclo (%s min) en la página %d del listado",
+                            self.aj["max_minutos_por_ciclo"], n)
                 break
             url = p["listado_pagina_1"] if n == 1 else p["listado_pagina_n"].format(pagina=n)
             self.progreso("Buscando avisos nuevos en el listado", f"{nombre}, página {n}")
@@ -138,7 +151,10 @@ class Ciclo:
                 siguiente = n + 1
             if not links:
                 vacias += 1
+                log.info("Página %d de %s: 0 avisos individuales (%d vacías seguidas; tamaño %d caracteres)",
+                         n, nombre, vacias, len(html))
                 if n in tramo and vacias >= max_vacias:
+                    log.info("Fin del listado de %s en la página %d: el próximo ciclo vuelve a empezar", nombre, n)
                     siguiente = 0          # fin del listado: el próximo ciclo vuelve a empezar
                     break
                 continue
@@ -150,6 +166,10 @@ class Ciclo:
                 if filas:
                     c.execute(insert(db.enlaces), filas)
             self.n["enlaces_nuevos"] += len(filas)
+            log.info("Página %d de %s: %d avisos, %d nuevos", n, nombre, len(links), len(filas))
+            log.debug("Enlaces nuevos de la página %d: %s", n, [f["url"] for f in filas])
+        log.info("Listado de %s terminado: %d enlaces nuevos; el próximo ciclo sigue en la página %d",
+                 nombre, self.n["enlaces_nuevos"], siguiente)
         escribir_estado(cursor={**(leer_estado().get("cursor") or {}), nombre: siguiente})
 
     # ---- fases 2 y 3
@@ -172,15 +192,20 @@ class Ciclo:
 
     def recorrer(self, nombre: str, p: dict, urls: list[str], fase: str, revision: bool):
         seguidos = 0
+        log.info("%s en %s: %d por visitar", fase, nombre, len(urls))
         for i, url in enumerate(urls, 1):
             if self.presupuesto.agotado():
+                log.warning("Se acabó el tiempo del ciclo: quedaron %d sin visitar en '%s'", len(urls) - i + 1, fase)
                 break
             self.progreso(fase, f"{nombre}: {i} de {len(urls)}")
             ok = self.visitar(nombre, p, url)
             if revision:
                 self.n["revisados"] += 1
             seguidos = 0 if ok else seguidos + 1
+            if i % 25 == 0:
+                log.info("%s en %s: %d de %d (%s)", fase, nombre, i, len(urls), self.n)
             if seguidos >= self.aj["max_errores_seguidos"]:
+                log.error("%d avisos seguidos sin datos en %s: se detiene el portal", seguidos, nombre)
                 raise RuntimeError(f"{seguidos} avisos seguidos sin datos en {nombre}: "
                                    "probablemente el portal cambió su página. Revise con 'diagnostico'.")
 
@@ -192,18 +217,25 @@ class Ciclo:
             if final and final.rstrip("/") != url.rstrip("/") and not re.match(p["patron_detalle"], final):
                 raise AvisoRetirado(f"redirigido a {final}")
             campos, metodo = extraer(html, url, p.get("patron_barrio_url"))
+            faltan = [k for k in CAMPOS if campos.get(k) in (None, "")]
+            log.debug("Aviso %s leído por %s; faltan: %s", url, metodo, faltan or "nada")
             if not campos.get("precio") and not campos.get("area"):
+                log.warning("Aviso sin precio ni área (¿cambió la página del portal?): %s", url)
                 estado, ok = "sin_datos", False
             else:
                 self.guardar(nombre, url, campos, metodo)
-        except AvisoRetirado:
+        except AvisoRetirado as e:
+            log.info("Aviso retirado (%s): %s", e, url)
             self.retirar(url)
             estado = "retirado"
-        except PermissionError:
+        except PermissionError as e:
+            log.info("No se visita por robots.txt: %s (%s)", url, e)
             estado = "robots"
-        except BloqueoDelPortal:
+        except BloqueoDelPortal as e:
+            log.error("BLOQUEO del portal %s en %s: %s. Se detiene todo el ciclo.", nombre, url, e)
             raise
         except Exception as e:  # un aviso dañado no debe tumbar el ciclo
+            log.warning("Error leyendo %s: %s: %s", url, type(e).__name__, e, exc_info=log.isEnabledFor(logging.DEBUG))
             estado, ok = f"error:{type(e).__name__}"[:40], False
         if not ok:
             self.n["errores"] += 1
@@ -226,6 +258,7 @@ class Ciclo:
             if previo is None:
                 c.execute(insert(t), {**nuevo, **base})
                 self.n["avisos_nuevos"] += 1
+                log.debug("Aviso nuevo guardado: %s precio=%s área=%s", url, nuevo.get("precio_txt"), nuevo.get("area_txt"))
                 return
             cambios = []
             for campo, f in SEGUIDOS.items():
@@ -242,6 +275,10 @@ class Ciclo:
             if cambios:
                 c.execute(insert(db.cambios), cambios)
                 self.n["con_cambios"] += 1
+                log.info("Cambios en %s: %s", url, "; ".join(f"{x['campo']}: {x['antes']} -> {x['despues']}"
+                                                            for x in cambios))
+            else:
+                log.debug("Revisado sin cambios: %s", url)
 
     def retirar(self, url: str):
         t = db.inmuebles_crudos
@@ -252,6 +289,7 @@ class Ciclo:
                 c.execute(insert(db.cambios), [{"url_origen": url, "fecha": ahora(), "campo": "disponible",
                                                 "antes": "sí", "despues": "no"}])
                 self.n["retirados"] += 1
+                log.debug("Marcado como retirado en la base: %s", url)
 
     # ---- todo junto
     def portales(self) -> list[tuple[str, dict]]:
@@ -270,6 +308,8 @@ class Ciclo:
 def ejecutar(conf: dict | None = None, cliente_cls=Cliente, entrenar_modelo: bool = True) -> dict:
     conf = conf or cargar_conf()
     aj = ajustes(conf)
+    log.info("==== Ciclo automático: inicio (pid %s) ====", os.getpid())
+    log.debug("Ajustes: %s", aj)
     if not tomar_candado(aj["max_minutos_por_ciclo"]):
         return {"resultado": "en_curso", "mensaje": "Ya hay un ciclo en curso."}
     inicio = ahora()
@@ -283,15 +323,19 @@ def ejecutar(conf: dict | None = None, cliente_cls=Cliente, entrenar_modelo: boo
             try:
                 ciclo.recolectar()
             except BloqueoDelPortal as e:
+                log.error("Ciclo detenido por bloqueo del portal: %s", e)
                 res.update(resultado="bloqueado", mensaje=f"El portal limitó el acceso ({e}). Se espera antes de seguir.")
             except RuntimeError as e:
+                log.error("Ciclo detenido: %s", e)
                 res.update(resultado="error", mensaje=str(e))
-            except requests.exceptions.ConnectionError:
+            except requests.exceptions.ConnectionError as e:
+                log.error("Sin conexión con el portal: %s", e)
                 res.update(resultado="sin_conexion",
                            mensaje="No hubo conexión con el portal (revise internet). Se reintenta en una hora.")
         cambio = ciclo.n["avisos_nuevos"] + ciclo.n["con_cambios"] + ciclo.n["retirados"]
         res["version_dataset"] = actualizar_dataset_y_modelo(ciclo, cambio > 0, entrenar_modelo, aj)
     except Exception as e:  # el estado debe quedar escrito aunque algo falle
+        log.exception("Error inesperado en el ciclo")
         res.update(resultado="error", mensaje=f"{type(e).__name__}: {e}")
     finally:
         res.update(fin=ahora().isoformat(), **ciclo.n)
@@ -302,6 +346,7 @@ def ejecutar(conf: dict | None = None, cliente_cls=Cliente, entrenar_modelo: boo
                 **{k: v for k, v in ciclo.n.items() if k != "errores"}}])
         escribir_estado(estado="inactivo", fase="", detalle="", contadores=ciclo.n, ultimo_ciclo=res)
         soltar_candado()
+        log.info("==== Ciclo automático: fin (%s) %s ====", res["resultado"], ciclo.n)
     return res
 
 
@@ -309,22 +354,27 @@ def actualizar_dataset_y_modelo(ciclo: Ciclo, hubo_cambios: bool, entrenar_model
     from limpieza import construir_dataset as cd
     hay_csv = any(RAIZ.joinpath("datos").glob("dataset_v*.csv"))
     if not hubo_cambios and hay_csv:
+        log.info("Sin cambios en los avisos: no se construye un dataset nuevo")
         return None
     ciclo.progreso("Limpiando y versionando el dataset")
     try:
         corte = cd.construir(notas="Ciclo automático", solo_si_cambia=True, eng=ciclo.eng,
                              conservar=aj["versiones_csv_a_conservar"])
-    except SystemExit:           # todavía no hay avisos guardados
+    except SystemExit as e:           # todavía no hay avisos guardados
+        log.info("No se construyó el dataset: %s", e)
         return None
     if corte is None:
+        log.info("El dataset quedó igual al anterior: no se publica versión nueva")
         return None
     version, ruta, n = corte
+    log.info("Dataset v%s publicado: %s con %d avisos", version, ruta.name, n)
     if entrenar_modelo:
         from modelo import entrenar
         ciclo.progreso("Reentrenando el modelo", f"{n} avisos")
         try:
             entrenar.entrenar(ruta, "real")
         except SystemExit as e:      # muy pocos avisos todavía: el dataset queda, el modelo espera
+            log.warning("No se reentrenó el modelo: %s", e)
             escribir_estado(mensaje_modelo=str(e))
     return version
 
@@ -333,6 +383,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sin-entrenar", action="store_true")
     a = ap.parse_args(argv)
+    from comun import registro
+    registro.configurar("ciclo", archivo=False)   # su salida la guarda la app en datos/estado/ciclo.log
     r = ejecutar(entrenar_modelo=not a.sin_entrenar)
     print(json.dumps(r, ensure_ascii=False, indent=2, default=str))
 

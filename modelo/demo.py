@@ -9,6 +9,7 @@ Bogotá y no deben usarse para conclusiones, informes ni métricas del proyecto.
 interfaz los marcan como demostración.
 """
 import argparse
+import logging
 
 import numpy as np
 import pandas as pd
@@ -87,6 +88,7 @@ def main(argv=None):
     df = generar(args.filas, args.semilla)
     DEMO.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(DEMO, index=False, encoding="utf-8")
+    logging.getLogger("vivienda.demo").info("Dataset SINTÉTICO de demostración: %d filas en %s", len(df), DEMO)
     print(f"Dataset SINTÉTICO de demostración: {len(df)} filas en {DEMO.relative_to(DEMO.parents[2])}")
 
 

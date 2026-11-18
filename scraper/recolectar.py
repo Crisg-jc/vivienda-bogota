@@ -10,6 +10,7 @@ Siempre empezar por `diagnostico` sobre 2 o 3 avisos para confirmar que los camp
 """
 import argparse
 import datetime as dt
+import logging
 import pathlib
 import sys
 
@@ -24,7 +25,28 @@ RAIZ = pathlib.Path(__file__).resolve().parents[1]
 
 
 def cargar_conf():
-    return yaml.safe_load((RAIZ / "config" / "portales.yaml").read_text(encoding="utf-8"))
+    ruta = RAIZ / "config" / "portales.yaml"
+    try:
+        conf = yaml.safe_load(ruta.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        logging.getLogger("vivienda.config").error("No existe %s: restáurelo desde el zip o el repositorio", ruta)
+        raise
+    except UnicodeDecodeError:
+        logging.getLogger("vivienda.config").error(
+            "%s no está guardado en UTF-8 (pasa al editarlo con el Bloc de notas antiguo). "
+            "Ábralo y use Guardar como > Codificación UTF-8", ruta)
+        raise
+    except yaml.YAMLError as e:
+        marca = getattr(e, "problem_mark", None)
+        donde = f" en la línea {marca.line + 1}, columna {marca.column + 1}" if marca else ""
+        logging.getLogger("vivienda.config").error(
+            "config/portales.yaml tiene un error de formato%s: %s. Revise la sangría (solo espacios, no tabulaciones) "
+            "y las comillas.", donde, getattr(e, "problem", e))
+        raise
+    if not isinstance(conf, dict) or "portales" not in conf or "general" not in conf:
+        logging.getLogger("vivienda.config").error("config/portales.yaml no tiene las secciones 'general' y 'portales'")
+        raise ValueError("config/portales.yaml incompleto")
+    return conf
 
 
 def portal_autorizado(conf, nombre):
@@ -174,6 +196,9 @@ def main(argv=None):
     t = sub.add_parser("detalle"); t.add_argument("--portal", required=True); t.add_argument("--max", type=int, default=100)
     sub.add_parser("estado")
     args = ap.parse_args(argv)
+    from comun import registro
+    registro.configurar("recolectar")
+    logging.getLogger("vivienda.recolectar").info("Comando: %s", vars(args))
     conf = cargar_conf()
     {"diagnostico": cmd_diagnostico, "diagnostico-listado": cmd_diagnostico_listado,
      "listado": cmd_listado,

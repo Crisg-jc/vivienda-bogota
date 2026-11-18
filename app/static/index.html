@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Precio de apartamentos en Bogotá</title>
   <meta name="description" content="Estime el precio de publicación de un apartamento en venta en Bogotá y compárelo con avisos reales.">
+  <script src="/static/registro.js"></script>
   <link rel="icon" href="/static/icono.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/vendor/fuentes/fuentes.css">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
@@ -295,6 +296,10 @@
           <div class="progreso" id="ac-progreso" hidden><span></span></div>
           <button class="boton" id="ac-ejecutar" type="button" hidden>Actualizar ahora</button>
           <p class="como-leer" id="ac-nota"></p>
+          <p class="como-leer registros-enlaces" id="ac-registros" hidden>¿Algo no funciona? Revise el
+            <a href="/api/registros?errores=true" target="_blank" rel="noopener">registro de errores</a>, el
+            <a href="/api/registros" target="_blank" rel="noopener">registro completo</a> o el
+            <a href="/api/diagnostico?texto=1" target="_blank" rel="noopener">diagnóstico</a>. Solo se ven desde este computador.</p>
         </div>
         <dl class="cifras cifras--base" id="ac-base"></dl>
       </div>

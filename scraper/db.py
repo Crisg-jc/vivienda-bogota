@@ -8,6 +8,7 @@ Tablas:
   cambios          -> historial: cada cambio de precio, característica o disponibilidad de un aviso
   ejecuciones      -> cada ciclo automático, con sus conteos y su resultado
 """
+import logging
 import os
 import pathlib
 
@@ -143,6 +144,7 @@ ejecuciones = Table(
 )
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
+log = logging.getLogger("vivienda.db")
 
 
 def url_por_defecto() -> str:
@@ -170,12 +172,19 @@ def asegurar_columnas(eng) -> list[str]:
                 with eng.begin() as c:
                     c.execute(text(f'ALTER TABLE {tabla.name} ADD COLUMN {col.name} {tipo}'))
                 agregadas.append(f"{tabla.name}.{col.name}")
+                log.info("Base de datos actualizada: columna nueva %s.%s (%s)", tabla.name, col.name, tipo)
     return agregadas
 
 
 def motor(url: str | None = None):
     url = url or os.getenv("DATABASE_URL") or url_por_defecto()
-    eng = create_engine(url, future=True)
-    metadata.create_all(eng)
-    asegurar_columnas(eng)
+    visible = url.split("@")[-1] if "@" in url else url        # sin usuario ni clave en el registro
+    log.debug("Abriendo base de datos: %s", visible)
+    try:
+        eng = create_engine(url, future=True)
+        metadata.create_all(eng)
+        asegurar_columnas(eng)
+    except Exception:
+        log.exception("No se pudo abrir o preparar la base de datos %s", visible)
+        raise
     return eng

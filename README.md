@@ -17,6 +17,24 @@ Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Crist
 - **Avisos:** una tabla con filtros para revisar los datos uno por uno, con cuánto está cada aviso por encima o por debajo del precio que el modelo esperaba para él, y si su precio subió o bajó.
 - **Modelo:** las métricas de validación cruzada y de la prueba final, explicadas.
 
+## Registros (logs) y diagnóstico
+
+Todo lo que pasa queda escrito, en el servidor y en el navegador:
+
+| Archivo | Qué tiene |
+|---|---|
+| `datos/registros/vivienda.log` | Cada paso: arranque, carga del dataset, entrenamiento, cada solicitud a la API con su duración, cada estimación, y los mensajes y errores del navegador (`vivienda.navegador`). Rota a los 5 MB. |
+| `datos/registros/errores.log` | Solo avisos y errores, con la traza completa. Es el primero que hay que abrir. |
+| `datos/estado/ciclo.log` | La recolección automática: cada página del listado, cada aviso, cada cambio de precio. Sus avisos y errores se copian también a `errores.log`. |
+| `datos/registros/instalacion.log` | Lo que hizo `iniciar.bat`: instalación de librerías y copia de datos. |
+| `datos/registros/diagnostico-*.txt` | Cada informe del diagnóstico. |
+
+Cada línea lleva fecha con milisegundos, nivel, proceso, módulo, el identificador de la solicitud (`rid=`) y el archivo y la línea de código que la escribió. El `rid` es el mismo en la línea del navegador y en la del servidor, así un error en pantalla se encuentra rápido en el registro.
+
+- **Más detalle:** `iniciar-con-detalle.bat`, o `python -m app --depurar` (o `VIVIENDA_LOG=DEBUG`). Registra además cada solicitud al portal, cada aviso descartado en la limpieza y por qué, cada llamada con sus parámetros.
+- **En el navegador:** F12 > Consola muestra los mensajes con el prefijo `[vivienda]`. Abra la página con `?depurar=1` para ver cada paso (queda recordado; `?depurar=0` lo apaga).
+- **Diagnóstico:** `python -m app.diagnostico` revisa Python, librerías, archivos, configuración, base de datos, dataset, modelo, puerto e internet, y dice cómo arreglar cada problema. También en la página (sección Actualización, solo desde el mismo computador): registro de errores, registro completo y diagnóstico.
+
 ## Navegadores compatibles
 
 Funciona en las versiones publicadas desde finales de 2020 de Chrome, Edge, Firefox, Safari (Mac, iPhone y iPad), Opera y Samsung Internet, en computador, tableta y celular. La lista exacta está en `.browserslistrc`, y la integración continua revisa en cada cambio que el código no use nada que esos navegadores no entiendan. En navegadores más antiguos, como Internet Explorer, la página muestra un aviso en vez de quedar en blanco. El mapa necesita internet solo para el fondo de calles: los límites de Colombia y de las localidades vienen en el repositorio.
@@ -24,6 +42,10 @@ Funciona en las versiones publicadas desde finales de 2020 de Chrome, Edge, Fire
 ## Empezar en 3 minutos
 
 Necesita Python 3.11 o superior.
+
+**En Windows, sin escribir comandos:** descomprima el proyecto y haga doble clic en `iniciar.bat`. La primera vez crea el entorno e instala las librerías (unos minutos); después revisa que todo esté bien, copia la base `vivienda.db` del recolector anterior si la encuentra en Descargas, y abre el navegador solo. En Linux o macOS: `./iniciar.sh`.
+
+A mano:
 
 ```bash
 git clone https://github.com/USUARIO/vivienda-bogota.git
@@ -197,7 +219,8 @@ curl -X POST http://127.0.0.1:8000/api/estimar \
 ## Estructura
 
 ```
-app/                 API (FastAPI), orquestador del ciclo automático e interfaz web
+app/                 API (FastAPI), orquestador del ciclo automático, diagnóstico e interfaz web
+comun/registro.py    registro (logs) de todos los procesos: formato, archivos, rotación, trazas
   static/geo/        límites de Colombia (Natural Earth) y de las 20 localidades (IDECA, CC BY 4.0)
   static/vendor/     Leaflet y fuentes incluidas, para no depender de CDN
 modelo/              carga del dataset, línea base, entrenamiento, estimación y datos de demostración
@@ -205,7 +228,8 @@ scraper/             recolección: robots.txt, pausas, freno ante bloqueos, extr
 limpieza/            normalización, localidad por coordenadas, deduplicación, versionado
 config/portales.yaml portales, URLs, pausas y control de términos de uso
 sql/schema.sql       esquema de referencia en PostgreSQL
-tests/               pruebas del recolector, la limpieza, el modelo y la API
+tests/               pruebas del recolector, la limpieza, el modelo, la API y el registro
+iniciar.bat          instala y abre la aplicación con doble clic (Windows); iniciar.sh en Linux/macOS
 ```
 
 ## Operación y seguridad

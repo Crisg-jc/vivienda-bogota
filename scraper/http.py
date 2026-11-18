@@ -1,10 +1,13 @@
 """Cliente HTTP respetuoso: robots.txt, pausas, reintentos limitados y freno ante bloqueos."""
+import logging
 import random
 import re
 import time
 import urllib.parse
 
 import requests
+
+log = logging.getLogger("vivienda.http")
 
 
 class BloqueoDelPortal(Exception):
@@ -78,15 +81,20 @@ class Cliente:
 
     def robots(self, base: str) -> Robots:
         if base not in self._robots:
-            r = self.sesion.get(base.rstrip("/") + "/robots.txt", timeout=self.conf["timeout_s"])
+            url = base.rstrip("/") + "/robots.txt"
+            log.info("Leyendo %s", url)
+            r = self.sesion.get(url, timeout=self.conf["timeout_s"])
+            log.debug("robots.txt -> %d, %d caracteres", r.status_code, len(r.text))
             r.raise_for_status()
             self._robots[base] = Robots(r.text, self.conf["user_agent"])
+            log.info("robots.txt de %s: %d reglas aplican a este agente", base, len(self._robots[base].reglas))
         return self._robots[base]
 
     def _pausa(self):
         espera = random.uniform(self.conf["pausa_min_s"], self.conf["pausa_max_s"])
         transcurrido = time.monotonic() - self._ultima
         if transcurrido < espera:
+            log.debug("Pausa de cortesía: %.1fs", espera - transcurrido)
             time.sleep(espera - transcurrido)
         self._ultima = time.monotonic()
 
@@ -99,21 +107,33 @@ class Cliente:
             raise PermissionError(f"robots.txt no permite {url}")
         for intento in range(self.conf["reintentos"] + 1):
             self._pausa()
+            t = time.perf_counter()
             try:
                 r = self.sesion.get(url, timeout=self.conf["timeout_s"])
-            except requests.RequestException:
+            except requests.RequestException as e:
+                log.warning("GET %s falló (intento %d de %d): %s: %s", url, intento + 1, self.conf["reintentos"] + 1,
+                            type(e).__name__, e)
                 if intento == self.conf["reintentos"]:
                     raise
                 continue
+            ms = (time.perf_counter() - t) * 1000
+            log.debug("GET %s -> %d, %d caracteres, %.0fms%s", url, r.status_code, len(r.text), ms,
+                      f" (redirigido a {r.url})" if r.url != url else "")
             if r.status_code in (403, 429):
+                log.error("El portal respondió %d en %s (cabeceras: Retry-After=%s)", r.status_code, url,
+                          r.headers.get("Retry-After"))
                 raise BloqueoDelPortal(f"{r.status_code} en {url}")
             if r.status_code in (404, 410):
                 raise AvisoRetirado(f"{r.status_code} en {url}")
             if r.status_code >= 500 and intento < self.conf["reintentos"]:
+                log.warning("El portal respondió %d en %s: se reintenta en %ds", r.status_code, url, 15 * (intento + 1))
                 time.sleep(15 * (intento + 1))
                 continue
             r.raise_for_status()
             if re.search(r"captcha|_Incapsula_Resource|cf-challenge", r.text[:5000], re.I):
+                log.error("Reto anti-bots (captcha) en %s", url)
                 raise BloqueoDelPortal(f"reto anti-bots en {url}")
+            if ms > 10000:
+                log.warning("Respuesta lenta del portal: %.1fs en %s", ms / 1000, url)
             return r.text, r.url
         raise RuntimeError(f"sin respuesta válida para {url}")

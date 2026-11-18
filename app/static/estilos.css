@@ -459,3 +459,8 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 @media (max-width: 640px) { .mini-mapa { height: 13rem; } }
 /* Al tocar una zona, el navegador no debe dibujar el recuadro de foco del trazo SVG */
 .leaflet-container path.leaflet-interactive:focus { outline: none; }
+
+/* Una sección que no pudo cargar dice qué pasó en lugar de quedar vacía */
+.error-seccion { margin: 1rem 0; padding: .85rem 1rem; border-left: 3px solid var(--ladrillo, #B4472C);
+  background: rgba(180, 71, 44, .07); color: var(--paramo, #17322C); border-radius: 4px; }
+.registros-enlaces a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }

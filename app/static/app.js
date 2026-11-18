@@ -20,14 +20,59 @@ const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
 const urlSegura = (u) => (typeof u === "string" && /^https?:\/\//.test(u) ? u : null);
 
-async function api(ruta, opciones) {
-  const r = await fetch(ruta, opciones);
+// Registro del navegador (registro.js). Si ese archivo no cargó, se usa la consola sin más.
+const REG = window.REG || { debug() {}, info: console.info.bind(console), warn: console.warn.bind(console),
+  error: console.error.bind(console), tiempo: () => ({ fin() {}, fallo() {} }) };
+let contadorPeticiones = 0;
+
+// Toda llamada a la API pasa por aquí: se registra método, ruta, código, duración y el rid que la
+// enlaza con la línea del servidor en datos/registros/vivienda.log.
+async function api(ruta, opciones = {}) {
+  const metodo = opciones.method || "GET";
+  const rid = `${REG.sesion || "nav"}-${++contadorPeticiones}`;
+  const inicio = performance.now();
+  const sondeo = ruta === "/api/automatizacion";
+  REG.debug(`→ ${metodo} ${ruta}`, opciones.body ? JSON.parse(opciones.body) : undefined);
+  let r;
+  try {
+    r = await fetch(ruta, { ...opciones, headers: { ...(opciones.headers || {}), "X-Request-ID": rid } });
+  } catch (e) {
+    REG.error(`Sin respuesta del servidor en ${metodo} ${ruta} (rid=${rid}): ¿la aplicación está cerrada?`, e);
+    throw new Error("No hay conexión con la aplicación. ¿Sigue abierta la ventana donde la inició?");
+  }
+  const ms = Math.round(performance.now() - inicio);
   if (!r.ok) {
-    let detalle = `Error ${r.status}`;
-    try { const j = await r.json(); detalle = typeof j.detail === "string" ? j.detail : j.detail?.[0]?.msg || detalle; } catch {}
+    let detalle = `Error ${r.status}`, cuerpo = null;
+    try { cuerpo = await r.json(); detalle = typeof cuerpo.detail === "string" ? cuerpo.detail : cuerpo.detail?.[0]?.msg || detalle; } catch {}
+    REG[r.status >= 500 ? "error" : "warn"](`${metodo} ${ruta} -> ${r.status} en ${ms} ms (rid=${rid}): ${detalle}`, cuerpo);
     throw new Error(detalle);
   }
-  return r.json();
+  let datos;
+  try {
+    datos = await r.json();
+  } catch (e) {
+    REG.error(`${metodo} ${ruta}: la respuesta no es JSON válido (rid=${rid})`, e);
+    throw new Error("La aplicación devolvió una respuesta dañada.");
+  }
+  if (!sondeo) REG.debug(`← ${metodo} ${ruta} ${r.status} en ${ms} ms`);
+  if (ms > 3000) REG.warn(`Respuesta lenta: ${metodo} ${ruta} tardó ${ms} ms (rid=${rid})`);
+  return datos;
+}
+
+// Ejecuta una carga y, si falla, la registra y muestra el problema en su sección en vez de dejarla vacía.
+async function seguro(que, fn, alFallar) {
+  const t = REG.tiempo(que);
+  try {
+    const v = await fn();
+    t.fin();
+    return v;
+  } catch (e) {
+    t.fallo(e);
+    if (alFallar) {
+      try { alFallar(e); } catch (e2) { REG.error(`También falló el aviso de error de ${que}`, e2); }
+    }
+    return undefined;
+  }
 }
 
 function el(nombre, atributos = {}, padre) {
@@ -77,23 +122,37 @@ function pintarDataset() {
   $("#aviso-demo").hidden = d.tipo !== "demo";
 }
 
+function avisoEnSeccion(selector, que) {
+  return (e) => {
+    const nodo = $(selector);
+    if (nodo) nodo.innerHTML = `<p class="error-seccion" role="alert">No se pudo cargar ${esc(que)}: ${esc(e.message)}. Los detalles quedaron en el registro de la aplicación.</p>`;
+  };
+}
+
 async function iniciar() {
+  const t = REG.tiempo("Arranque de la página");
+  REG.debug("Leaflet disponible", { leaflet: Boolean(window.L), version: window.L?.version });
+  if (!window.L) REG.error("Leaflet (mapas) no cargó: los mapas no se verán. Revise /static/vendor/leaflet/leaflet.js");
   ESTADO = await api("/api/estado");
+  REG.info(`Datos: ${ESTADO.dataset.archivo} (${ESTADO.dataset.tipo}), ${ESTADO.dataset.avisos} avisos; modelo ${ESTADO.modelo.nombre}`);
   pintarDataset();
   for (const sel of [$("#localidad"), $("#f-localidad")]) {
     for (const l of ESTADO.localidades) sel.add(new Option(l, l));
   }
   construirFormulario(ESTADO.referencia);
+  REG.debug("Formulario listo con valores de la URL", leerFormulario());
   estimarAhora();
-  cargarMercado();
-  cargarZonas();
-  cargarAvisos();
-  cargarModelo();
+  seguro("Cargar mercado", cargarMercado, avisoEnSeccion("#mercado .contenedor", "el análisis de mercado"));
+  seguro("Cargar zonas", cargarZonas, avisoEnSeccion("#z-panel", "el análisis por zonas"));
+  seguro("Cargar avisos", cargarAvisos, avisoEnSeccion("#a-filas", "la lista de avisos"));
+  seguro("Cargar modelo", cargarModelo, avisoEnSeccion("#modelo .contenedor", "la información del modelo"));
   cargarActualizacion();
+  t.fin();
 }
 
 // Cuando el ciclo automático publica un dataset nuevo, toda la página se pone al día sin recargar.
 async function refrescarTodo() {
+  REG.info("El ciclo automático publicó datos nuevos: se actualiza toda la página");
   ESTADO = await api("/api/estado");
   pintarDataset();
   ZONAS.cache.clear();
@@ -209,6 +268,7 @@ async function estimarAhora() {
   const datos = leerFormulario();
   const error = $("#error-form");
   if (!datos.area_m2 || datos.area_m2 < 15 || datos.area_m2 > 1000) {
+    REG.debug("Estimación no enviada: área fuera de rango", datos);
     error.textContent = "Escriba un área entre 15 y 1.000 m²."; error.hidden = false; return;
   }
   error.hidden = true;
@@ -216,8 +276,11 @@ async function estimarAhora() {
   const id = ++ultimaPeticion;
   try {
     const r = await api("/api/estimar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(datos) });
-    if (id === ultimaPeticion) pintarResultado(r, datos);
+    if (id !== ultimaPeticion) { REG.debug(`Estimación ${id} descartada: llegó una más nueva (${ultimaPeticion})`); return; }
+    REG.info(`Estimación: ${datos.area_m2} m², estrato ${datos.estrato}, ${datos.localidad || "sin localidad"} -> ${corto(r.precio)} (${corto(r.minimo)}–${corto(r.maximo)})`);
+    pintarResultado(r, datos);
   } catch (e) {
+    REG.error("Falló la estimación", { mensaje: e.message, datos, pila: e.stack });
     error.textContent = `No se pudo estimar: ${e.message}`; error.hidden = false;
   } finally { if (id === ultimaPeticion) form.classList.remove("calculando"); }
 }
@@ -472,11 +535,29 @@ function precioAnterior(a) {
 const ZONAS = { datos: null, porNombre: new Map(), mapa: null, capaLoc: null, capaPuntos: null, capaRegion: null,
   marcaBogota: null, limites: {}, seleccion: null, escala: [0, 1], cache: new Map(), geo: null };
 
-async function datosGeo() {
+// Se guarda la promesa, no solo el resultado: el mini mapa y el mapa de zonas piden los límites a la vez
+// y así se descargan una sola vez.
+function datosGeo() {
+  if (!ZONAS.geoPromesa) ZONAS.geoPromesa = leerGeo().catch((e) => { ZONAS.geoPromesa = null; throw e; });
+  return ZONAS.geoPromesa;
+}
+
+async function leerGeo() {
   if (!ZONAS.geo) {
-    const [loc, reg] = await Promise.all([fetch("/static/geo/localidades.geojson").then((r) => r.json()),
-      fetch("/static/geo/region.geojson").then((r) => r.json())]);
-    ZONAS.geo = { loc, reg };
+    const leer = async (url) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`${url} respondió ${r.status}`);
+      return r.json();
+    };
+    const t = REG.tiempo("Leer límites del mapa");
+    try {
+      const [loc, reg] = await Promise.all([leer("/static/geo/localidades.geojson"), leer("/static/geo/region.geojson")]);
+      ZONAS.geo = { loc, reg };
+      t.fin({ localidades: loc.features?.length, region: reg.features?.length });
+    } catch (e) {
+      t.fallo(e);
+      throw e;
+    }
   }
   return ZONAS.geo;
 }
@@ -484,6 +565,7 @@ async function datosGeo() {
 async function cargarZonas() {
   const [z, geo] = await Promise.all([api("/api/zonas"), datosGeo()]);
   const puntos = MERCADO ? MERCADO.mapa : (await api("/api/mercado")).mapa;
+  REG.debug(`Zonas: ${z.localidades.filter((l) => l.n).length} localidades con avisos, ${puntos.length} puntos en el mapa`);
   ZONAS.datos = z;
   ZONAS.porNombre = new Map(z.localidades.map((l) => [l.nombre, l]));
   const conDatos = z.localidades.filter((l) => l.n >= 3);
@@ -543,7 +625,8 @@ function pintarMapaZonas(geo, puntos) {
     L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> | Localidades: IDECA (CC BY 4.0) | Países: Natural Earth',
       maxZoom: 18,
-    }).addTo(mapa);
+    }).on("tileerror", tilesFallidas("mapa de zonas")).addTo(mapa);
+    REG.debug("Mapa de zonas creado");
     ZONAS.capaRegion = L.geoJSON(geo.reg, {
       interactive: false,
       style: (f) => (f.properties.nombre === "Colombia"
@@ -630,6 +713,7 @@ function encuadrar(vista) {
 
 async function seleccionarZona(nombre, { encuadrar: mover = true } = {}) {
   if (!nombre) return;
+  REG.debug(`Zona elegida: ${nombre}`);
   ZONAS.seleccion = nombre;
   $("#z-localidad").value = nombre;
   if (ZONAS.capaLoc) ZONAS.capaLoc.setStyle(estiloLocalidad);
@@ -777,22 +861,39 @@ function encuadrarMini(limites, opciones) {
   });
 }
 
+// Las calles de fondo vienen de internet (CARTO). Si fallan, se avisa una vez por mapa, no por cada tesela.
+function tilesFallidas(mapa) {
+  let n = 0;
+  return (e) => {
+    n++;
+    if (n === 1) REG.warn(`No cargan las calles de fondo del ${mapa} (¿sin internet o bloqueadas por la red?). Los límites de las localidades sí se ven.`, e.tile?.src);
+    else if (n % 50 === 0) REG.debug(`${n} teselas fallidas en el ${mapa}`);
+  };
+}
+
 async function ubicarEstimacion(r, datos) {
-  if (!window.L) return;
+  if (!window.L) { REG.warn("Mini mapa omitido: Leaflet no está cargado"); return; }
+  const t = REG.tiempo("Ubicar la estimación en el mapa");
+  try { await ubicarEstimacionSinRegistro(r, datos); t.fin({ localidad: datos.localidad, similares: r.similares.length }); } catch (e) { t.fallo(e); }
+}
+
+async function ubicarEstimacionSinRegistro(r, datos) {
   const geo = await datosGeo();
   if (!MINI.mapa) {
     MINI.mapa = L.map("mini-mapa", { scrollWheelZoom: false, zoomControl: false, attributionControl: true, minZoom: 9, maxZoom: 16, zoomSnap: 0.25 });
     L.control.zoom({ position: "topright" }).addTo(MINI.mapa);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>', maxZoom: 18,
-    }).addTo(MINI.mapa);
+    }).on("tileerror", tilesFallidas("mini mapa del resultado")).addTo(MINI.mapa);
+    REG.debug("Mini mapa del resultado creado");
     MINI.capaLoc = L.geoJSON(geo.loc, {
       style: estiloMini,
       onEachFeature: (f, capa) => {
         const nombre = f.properties.nombre;
         capa.bindTooltip(nombre, { sticky: true, className: "etiqueta-loc" });
         capa.on("click", (e) => {
-          if (!ESTADO.localidades.includes(nombre)) return;   // Sumapaz es rural: el modelo no la conoce
+          if (!ESTADO.localidades.includes(nombre)) { REG.info(`Mini mapa: ${nombre} es rural y el modelo no la conoce; no se cambia la estimación`); return; }
+          REG.info(`Mini mapa: tocó ${nombre}; se recalcula el precio`, { lat: e.latlng.lat, lng: e.latlng.lng });
           MINI.punto = e.latlng; MINI.nombrePunto = nombre;
           $("#localidad").value = nombre;
           programar();
@@ -846,11 +947,19 @@ const RESULTADOS = { completo: "Completo", bloqueado: "Bloqueado por el portal",
 const hora = (iso) => new Date(iso).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" });
 const fechaCorta = (iso) => new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
+let situacionAnterior = null;
 async function cargarActualizacion() {
   clearTimeout(sondeo);
   let a;
-  try { a = await api("/api/automatizacion"); } catch { sondeo = setTimeout(cargarActualizacion, 60000); return; }
-  pintarActualizacion(a);
+  try { a = await api("/api/automatizacion"); } catch (e) {
+    REG.warn("No se pudo consultar el estado de la actualización; se reintenta en 1 minuto", e.message);
+    sondeo = setTimeout(cargarActualizacion, 60000); return;
+  }
+  if (a.situacion !== situacionAnterior) {
+    REG.info(`Actualización automática: ${a.situacion}${a.fase ? ` (${a.fase})` : ""}`, { ultimo: a.ultimo_ciclo, proximo: a.proximo_ciclo });
+    situacionAnterior = a.situacion;
+  }
+  try { pintarActualizacion(a); } catch (e) { REG.error("Falló al mostrar el estado de la actualización", e); }
   const firma = `${a.dataset.archivo}|${a.dataset.avisos}`;
   if (FIRMA_DATASET && firma !== FIRMA_DATASET) refrescarTodo();
   FIRMA_DATASET = firma;
@@ -874,6 +983,7 @@ function pintarActualizacion(a) {
   $("#ac-progreso").hidden = !m;
   if (m) $("#ac-progreso span").style.width = `${(Number(m[1]) / Number(m[2])) * 100}%`;
   $("#ac-ejecutar").hidden = !(a.puede_ejecutar && a.situacion === "esperando");
+  $("#ac-registros").hidden = !a.puede_ejecutar;
   $("#ac-nota").textContent = u && u.resultado !== "completo" && u.mensaje ? `Último ciclo: ${u.mensaje}` : "";
 
   const b = a.base || {};
@@ -899,6 +1009,7 @@ $("#ac-ejecutar").addEventListener("click", async () => {
   boton.disabled = true;
   try {
     await api("/api/automatizacion/ejecutar", { method: "POST" });
+    REG.info("Ciclo iniciado a mano desde la página");
     $("#ac-nota").textContent = "Ciclo iniciado.";
   } catch (e) {
     $("#ac-nota").textContent = `No se pudo iniciar: ${e.message}`;
@@ -928,12 +1039,13 @@ async function cargarAvisos() {
   $("#a-anterior").disabled = r.pagina <= 1;
   $("#a-siguiente").disabled = r.pagina >= paginas;
 }
-$("#filtros").addEventListener("change", () => { paginaActual = 1; cargarAvisos(); });
-$("#a-anterior").addEventListener("click", () => { paginaActual--; cargarAvisos(); });
-$("#a-siguiente").addEventListener("click", () => { paginaActual++; cargarAvisos(); });
+const recargarAvisos = () => seguro("Cargar avisos", cargarAvisos, avisoEnSeccion("#a-filas", "la lista de avisos"));
+$("#filtros").addEventListener("change", () => { paginaActual = 1; REG.debug("Filtros de avisos", Object.fromEntries(new FormData($("#filtros")))); recargarAvisos(); });
+$("#a-anterior").addEventListener("click", () => { paginaActual--; recargarAvisos(); });
+$("#a-siguiente").addEventListener("click", () => { paginaActual++; recargarAvisos(); });
 $("#a-limpiar").addEventListener("click", () => {
   const f = $("#filtros"); const orden = f.orden.value;
-  f.reset(); f.orden.value = orden; paginaActual = 1; cargarAvisos();
+  f.reset(); f.orden.value = orden; paginaActual = 1; recargarAvisos();
 });
 
 // ---------------------------------------------------------------- modelo
@@ -994,6 +1106,7 @@ new IntersectionObserver(([e]) => { resumenVisible = e.isIntersecting; actualiza
 })();
 
 iniciar().catch((e) => {
+  REG.error("La página no pudo arrancar", e);
   $("#insignia-datos").textContent = "No se pudo conectar con la API";
   $("#resultado-vacio p").textContent = `La aplicación no respondió (${e.message}). Revise la terminal donde la inició.`;
 });

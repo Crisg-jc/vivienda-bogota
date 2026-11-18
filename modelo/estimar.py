@@ -1,4 +1,5 @@
 """Estimación de un apartamento con el modelo guardado: precio, rango y explicación."""
+import logging
 import math
 
 import joblib
@@ -8,6 +9,7 @@ import pandas as pd
 from . import datos as D
 from .entrenar import MODELO, preparar
 
+log = logging.getLogger("vivienda.estimar")
 NOMBRES = {"area_m2": "Área", "habitaciones": "Habitaciones", "banos": "Baños", "estrato": "Estrato",
            "parqueaderos": "Parqueaderos", "antiguedad": "Antigüedad", "localidad": "Localidad"}
 
@@ -16,8 +18,15 @@ def cargar_modelo() -> dict | None:
     """Carga el modelo guardado. joblib usa pickle: solo se cargan artefactos producidos por este
     mismo proyecto (artefactos/ no se sube al repositorio ni se acepta desde fuera)."""
     if not MODELO.exists():
+        log.info("No hay modelo guardado en %s", MODELO)
         return None
-    art = joblib.load(MODELO)
+    try:
+        art = joblib.load(MODELO)
+    except Exception:
+        # Pasa si el modelo se guardó con otra versión de scikit-learn: se borra y se reentrena.
+        log.exception("No se pudo cargar %s (¿otra versión de scikit-learn?). Se reentrenará.", MODELO)
+        return None
+    log.debug("Modelo cargado: %s, entrenado con dataset %s…", art.get("nombre"), str(art.get("sha256"))[:10])
     un_hilo(art["modelo"])
     return art
 

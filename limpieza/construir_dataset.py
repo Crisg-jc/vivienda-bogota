@@ -18,6 +18,7 @@ conjunto de entrenamiento, después de separar la prueba, para no filtrar inform
 import argparse
 import hashlib
 import json
+import logging
 import pathlib
 from collections import Counter
 
@@ -28,6 +29,8 @@ from scraper import db
 
 from . import geo
 from . import normalizar as nz
+
+log = logging.getLogger("vivienda.limpieza")
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 
@@ -54,22 +57,29 @@ def admin_valida(admin: int | None, precio: int) -> int | None:
 
 def normalizar_crudos(crudos: pd.DataFrame) -> tuple[pd.DataFrame, Counter]:
     descartes, filas = Counter(), []
+    detalle = log.isEnabledFor(logging.DEBUG)
+
+    def descartar(motivo, r, valor=""):
+        descartes[motivo] += 1
+        if detalle:
+            log.debug("Descartado (%s) %s %s", motivo, valor, r.url_origen)
+
     for r in crudos.itertuples(index=False):
         if not nz.es_apartamento(r.tipo_txt):
-            descartes["no es apartamento"] += 1
+            descartar("no es apartamento", r, f"tipo={r.tipo_txt!r}")
             continue
         p, a = nz.precio(r.precio_txt), nz.area(r.area_txt)
         if p is None or a is None:
-            descartes["sin precio o sin área"] += 1
+            descartar("sin precio o sin área", r, f"precio={r.precio_txt!r} área={r.area_txt!r}")
             continue
         if p <= 0:
-            descartes["precio igual a cero"] += 1
+            descartar("precio igual a cero", r)
             continue
         if not REGLAS["area_min_m2"] <= a <= REGLAS["area_max_m2"]:
-            descartes["área fuera de 25–500 m²"] += 1
+            descartar("área fuera de 25–500 m²", r, f"área={a}")
             continue
         if not REGLAS["precio_min"] <= p <= REGLAS["precio_max"]:
-            descartes["precio fuera de 80–3.000 millones"] += 1
+            descartar("precio fuera de 80–3.000 millones", r, f"precio={p}")
             continue
 
         def rango(v, lo, hi):
@@ -88,6 +98,9 @@ def normalizar_crudos(crudos: pd.DataFrame) -> tuple[pd.DataFrame, Counter]:
             origen_loc = "nombre del barrio" if loc else None
         if origen_loc:
             descartes[f"(info) localidad tomada de {origen_loc}"] += 1
+        elif detalle:
+            log.debug("Sin localidad: barrio=%r localidad_txt=%r coordenadas=(%s, %s) %s", barrio, r.localidad_txt,
+                      lat, lon, r.url_origen)
         filas.append({
             "precio": p, "area_m2": round(a, 2),
             "habitaciones": rango(nz.entero(r.habitaciones_txt), 1, REGLAS["habitaciones_max"]),
@@ -134,6 +147,7 @@ def deduplicar(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
                         and abs(df.at[i, "precio"] - df.at[j, "precio"])
                         <= REGLAS["dup_tolerancia_precio"] * df.at[i, "precio"]):
                     eliminar.add(j)
+                    log.debug("Duplicado: %s se parece a %s", df.at[j, "url_origen"], df.at[i, "url_origen"])
     return df.drop(index=list(eliminar)).reset_index(drop=True), len(eliminar)
 
 
@@ -190,6 +204,7 @@ def precios_anteriores(c) -> pd.DataFrame:
 def limpiar_versiones_viejas(carpeta: pathlib.Path, conservar: int):
     cortes = sorted(carpeta.glob("dataset_v*.csv"), key=lambda r: int(r.stem.split("_v")[1]))
     for r in cortes[:-conservar]:
+        log.info("Borrando versión vieja del dataset: %s (se conservan %d)", r.name, conservar)
         r.unlink(missing_ok=True)
         r.with_name(r.name.replace("dataset_v", "reporte_calidad_v").replace(".csv", ".md")).unlink(missing_ok=True)
 
@@ -204,14 +219,21 @@ def construir(notas: str = "", solo_si_cambia: bool = False, eng=None, conservar
                              .order_by(db.dataset_versiones.c.version.desc()).limit(1)).first()
         version = (anterior.version if anterior else 0) + 1
         previos = precios_anteriores(c)
+    log.info("Construyendo dataset: %d avisos crudos disponibles, última versión %s",
+             len(crudos), anterior.version if anterior else "ninguna")
     if crudos.empty:
         raise SystemExit("No hay registros disponibles en inmuebles_crudos.")
     df, descartes = normalizar_crudos(crudos)
+    log.info("Normalización: %d válidos de %d. Motivos: %s", len(df), len(crudos), dict(descartes))
     df, n_dup = deduplicar(df)
+    log.info("Duplicados quitados: %d; quedan %d", n_dup, len(df))
+    vacios = {c: int(n) for c, n in df.isna().sum().items() if n}
+    log.info("Campos vacíos en el dataset limpio: %s", vacios)
     suma = checksum(df)
     salida = RAIZ / "datos"
     if solo_si_cambia and anterior and anterior.checksum_sha256 == suma \
             and (salida / f"dataset_v{anterior.version}.csv").exists():
+        log.info("Mismo contenido que la versión %s (checksum igual): no se crea otra", anterior.version)
         return None
     with eng.begin() as c:
         c.execute(insert(db.dataset_versiones), [{
@@ -232,8 +254,8 @@ def construir(notas: str = "", solo_si_cambia: bool = False, eng=None, conservar
         reporte(df, len(crudos), descartes, n_dup, version, suma), encoding="utf-8")
     if conservar:
         limpiar_versiones_viejas(salida, conservar)
-    print(f"Dataset v{version}: {len(df)} registros limpios de {len(crudos)} crudos "
-          f"({n_dup} duplicados). Archivos en datos/.")
+    log.info("Dataset v%s: %d registros limpios de %d crudos (%d duplicados). Guardado en %s",
+             version, len(df), len(crudos), n_dup, ruta)
     return version, ruta, len(df)
 
 
@@ -241,6 +263,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--notas", default="")
     args = ap.parse_args(argv)
+    from comun import registro
+    registro.configurar("limpieza")
     construir(args.notas)
 
 

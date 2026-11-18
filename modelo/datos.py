@@ -9,6 +9,7 @@ El tercer caso existe solo para que la aplicación se pueda probar sin recolecta
 venga de él se marca como demostración en la API y en la interfaz.
 """
 import hashlib
+import logging
 import os
 import pathlib
 import re
@@ -17,6 +18,7 @@ import pandas as pd
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 DEMO = RAIZ / "datos" / "demo" / "dataset_demo.csv"
+log = logging.getLogger("vivienda.datos")
 
 NUMERICAS = ["area_m2", "habitaciones", "banos", "estrato", "parqueaderos", "antiguedad"]
 CATEGORICAS = ["localidad"]
@@ -30,7 +32,9 @@ def ubicar() -> tuple[pathlib.Path | None, str]:
     if propia:
         ruta = pathlib.Path(propia)
         if not ruta.exists():
+            log.error("VIVIENDA_DATASET apunta a %s, que no existe", ruta)
             raise SystemExit(f"VIVIENDA_DATASET apunta a {ruta}, que no existe.")
+        log.debug("Dataset fijado por VIVIENDA_DATASET: %s", ruta)
         return ruta, "demo" if ruta.resolve() == DEMO.resolve() else "real"
     cortes = []
     for r in (RAIZ / "datos").glob("dataset_v*.csv"):
@@ -38,9 +42,12 @@ def ubicar() -> tuple[pathlib.Path | None, str]:
         if m:
             cortes.append((int(m.group(1)), r))
     if cortes:
+        log.debug("Cortes encontrados en datos/: %s", sorted(v for v, _ in cortes))
         return max(cortes)[1], "real"
     if DEMO.exists():
+        log.debug("No hay cortes reales en datos/: se usa el de demostración")
         return DEMO, "demo"
+    log.debug("No hay ningún dataset en %s", RAIZ / "datos")
     return None, "ninguno"
 
 
@@ -49,9 +56,15 @@ def huella(ruta: pathlib.Path) -> str:
 
 
 def cargar(ruta: pathlib.Path) -> pd.DataFrame:
-    df = pd.read_csv(ruta, encoding="utf-8-sig")
+    try:
+        df = pd.read_csv(ruta, encoding="utf-8-sig")
+    except Exception:
+        log.exception("No se pudo leer el CSV %s (¿archivo dañado o abierto en Excel?)", ruta)
+        raise
+    log.debug("CSV %s leído: %d filas, columnas %s", ruta.name, len(df), list(df.columns))
     faltan = [c for c in [OBJETIVO, "area_m2", "estrato"] if c not in df.columns]
     if faltan:
+        log.error("%s no tiene las columnas obligatorias %s", ruta.name, faltan)
         raise SystemExit(f"{ruta.name} no tiene las columnas {faltan}.")
     for c in NUMERICAS + [OBJETIVO, "latitud", "longitud", "administracion"]:
         if c in df.columns:
@@ -62,6 +75,9 @@ def cargar(ruta: pathlib.Path) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = None
     # Mismas reglas mínimas de limpieza/construir_dataset: un registro sin precio o área no sirve.
+    antes = len(df)
     df = df[df[OBJETIVO].gt(0) & df["area_m2"].gt(0)].copy()
+    if len(df) < antes:
+        log.info("%s: %d filas sin precio o sin área se dejan fuera", ruta.name, antes - len(df))
     df["precio_m2"] = df[OBJETIVO] / df["area_m2"]
     return df.reset_index(drop=True)

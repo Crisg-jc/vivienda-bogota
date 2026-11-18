@@ -20,6 +20,7 @@ from scraper import db
 from scraper.recolectar import RAIZ, cargar_conf
 
 log = logging.getLogger("vivienda.automatico")
+log_ciclo = logging.getLogger("vivienda.ciclo")
 REGISTRO = cy.CARPETA / "ciclo.log"
 
 
@@ -61,8 +62,16 @@ class Orquestador:
 
     def activo(self) -> bool:
         if os.environ.get("VIVIENDA_AUTOMATICO", "1") == "0":
+            log.debug("VIVIENDA_AUTOMATICO=0: automatización apagada por variable de entorno")
             return False
-        return bool(self.ajustes()[1]["activo"])
+        try:
+            aj = self.ajustes()[1]
+        except Exception:
+            log.exception("No se pudo leer config/portales.yaml: la automatización queda apagada. "
+                          "Revise que el archivo exista y que la sangría (espacios) sea correcta.")
+            return False
+        log.debug("Ajustes de automatización: %s", aj)
+        return bool(aj["activo"])
 
     def motor(self):
         if self._motor is None:
@@ -74,7 +83,18 @@ class Orquestador:
         if not self.activo():
             log.info("Automatización apagada (config o VIVIENDA_AUTOMATICO=0).")
             return
-        _, aj = self.ajustes()
+        conf, aj = self.ajustes()
+        for nombre, p in conf["portales"].items():
+            if not p.get("habilitado"):
+                log.info("Portal %s: deshabilitado en config/portales.yaml", nombre)
+            elif not p.get("terminos_revisados"):
+                log.warning("Portal %s: falta poner terminos_revisados: true en config/portales.yaml "
+                            "(después de leer sus términos). Mientras tanto no se recolecta nada de él.", nombre)
+            else:
+                log.info("Portal %s: autorizado (revisó %s)", nombre, p.get("revisado_por") or "sin nombre")
+        contacto = str(conf.get("general", {}).get("user_agent", ""))
+        if "cambiar" in contacto.lower() or "example" in contacto.lower() or "@" not in contacto:
+            log.warning("El user_agent de config/portales.yaml no tiene un correo de contacto real: %r", contacto)
         self.proximo = ahora() + dt.timedelta(seconds=aj["primer_ciclo_tras_segundos"])
         self.hilo = threading.Thread(target=self._bucle, name="ciclo-automatico", daemon=True)
         self.hilo.start()
@@ -105,41 +125,68 @@ class Orquestador:
         return True, "Ciclo iniciado."
 
     def _bucle(self):
+        log.debug("Hilo del orquestador iniciado")
         while not self.parar.is_set():
             try:
                 if self.proximo and ahora() >= self.proximo and not (self.pausa_hasta and ahora() < self.pausa_hasta):
                     self._correr_ciclo()
+                else:
+                    log.debug("Esperando: próximo ciclo %s, pausa hasta %s", self.proximo, self.pausa_hasta)
                 self.recargar()
             except Exception:  # el hilo nunca debe morir en silencio
                 log.exception("Error en el orquestador")
             self.despertar.wait(timeout=20)
             self.despertar.clear()
+        log.debug("Hilo del orquestador terminado")
 
     def _correr_ciclo(self):
         conf, aj = self.ajustes()
         if not aj["activo"]:
+            log.info("automatico.activo es false: no se lanza el ciclo; se vuelve a mirar en 10 minutos")
             self.proximo = ahora() + dt.timedelta(minutes=10)
             return
         # Sin portales autorizados no se lanza nada; se vuelve a mirar la configuración cada minuto,
         # así el ciclo arranca solo apenas alguien pone terminos_revisados: true (sin reiniciar).
         if not any(p.get("habilitado") and p.get("terminos_revisados") for p in conf["portales"].values()):
+            if not getattr(self, "_avisado_sin_portales", False):
+                log.warning("Ningún portal autorizado (terminos_revisados: true): no se recolecta. "
+                            "Se revisa la configuración cada minuto; no hace falta reiniciar.")
+                self._avisado_sin_portales = True
+            else:
+                log.debug("Sigue sin haber portales autorizados")
             self.proximo = ahora() + dt.timedelta(minutes=1)
             return
+        self._avisado_sin_portales = False
         cy.CARPETA.mkdir(parents=True, exist_ok=True)
         if REGISTRO.exists() and REGISTRO.stat().st_size > 5_000_000:
             REGISTRO.replace(REGISTRO.with_suffix(".log.1"))
-        log.info("Iniciando ciclo automático de recolección")
+        log.info("Iniciando ciclo automático de recolección (salida en %s)", REGISTRO)
+        inicio_registro = REGISTRO.stat().st_size if REGISTRO.exists() else 0
+        t0 = dt.datetime.now()
+        entorno = {**os.environ, "PYTHONIOENCODING": "utf-8"}   # tildes sin errores en Windows
         with open(REGISTRO, "a", encoding="utf-8") as salida:
             salida.write(f"\n===== {ahora().isoformat()} =====\n")
             salida.flush()
             self.proceso = subprocess.Popen([sys.executable, "-m", "scraper.ciclo"], cwd=RAIZ,
-                                            stdout=salida, stderr=subprocess.STDOUT)
+                                            stdout=salida, stderr=subprocess.STDOUT, env=entorno)
+            log.info("Ciclo lanzado como proceso %s", self.proceso.pid)
             while self.proceso.poll() is None and not self.parar.is_set():
                 self.parar.wait(timeout=15)
+                est = cy.leer_estado()
+                log.debug("Ciclo en curso: fase=%s detalle=%s contadores=%s", est.get("fase"), est.get("detalle"),
+                          est.get("contadores"))
                 self.recargar()          # los avances se ven en la interfaz mientras el ciclo sigue
         if self.parar.is_set():
+            log.info("Se pidió cerrar la aplicación con el ciclo en curso")
             return
+        codigo = self.proceso.returncode
+        duracion = (dt.datetime.now() - t0).total_seconds()
+        (log.info if codigo == 0 else log.error)("Proceso del ciclo terminó con código %s en %.0fs", codigo, duracion)
+        self._copiar_avisos_del_ciclo(inicio_registro)
         res = cy.leer_estado().get("ultimo_ciclo") or {}
+        log.info("Resultado del ciclo: %s", {k: v for k, v in res.items() if k != "contadores"})
+        if res.get("contadores"):
+            log.info("Contadores del ciclo: %s", res["contadores"])
         if res.get("resultado") == "bloqueado":
             horas = min(48, aj["espera_tras_bloqueo_horas"] * 2 ** self.bloqueos_seguidos)
             self.bloqueos_seguidos += 1
@@ -154,6 +201,36 @@ class Orquestador:
             self.pausa_hasta = None
             self.proximo = ahora() + dt.timedelta(hours=aj["intervalo_horas"])
         log.info("Ciclo terminado (%s). Próximo: %s", res.get("resultado"), self.proximo)
+
+    def _una_vez(self, clave: str, mensaje: str):
+        """La interfaz consulta el estado cada 5 s: un mismo error se registra completo una sola vez."""
+        vistos = self.__dict__.setdefault("_errores_vistos", set())
+        if clave in vistos:
+            log.debug(mensaje, exc_info=True)
+        else:
+            vistos.add(clave)
+            log.exception(mensaje + " (no se repetirá este aviso)")
+
+    def _copiar_avisos_del_ciclo(self, desde: int):
+        """Los avisos y errores que escribió el proceso del ciclo pasan también al registro principal
+        (y a errores.log), para tener todo en un solo lugar."""
+        try:
+            with open(REGISTRO, "rb") as f:
+                f.seek(desde)
+                nuevas = f.read().decode("utf-8", "replace").splitlines()
+        except OSError as e:
+            log.warning("No se pudo leer %s: %s", REGISTRO, e)
+            return
+        importantes = [ln for ln in nuevas if any(f" {n} " in ln for n in ("WARNING", "ERROR", "CRITICAL"))
+                       or ln.startswith("Traceback")]
+        for ln in importantes[:200]:
+            (log_ciclo.error if (" ERROR " in ln or " CRITICAL " in ln or ln.startswith("Traceback"))
+             else log_ciclo.warning)("(del ciclo) %s", ln.strip())
+        if not importantes:
+            log.debug("El ciclo no registró avisos ni errores (%d líneas nuevas)", len(nuevas))
+        elif len(importantes) > 200:
+            log.warning("El ciclo registró %d avisos/errores; se copiaron los primeros 200. Vea %s",
+                        len(importantes), REGISTRO)
 
     # ---------------------------------------------------------------- estado para la interfaz
     def estado(self) -> dict:
@@ -191,6 +268,7 @@ class Orquestador:
         try:
             eng = self.motor()
         except Exception:
+            self._una_vez("bd", "No se pudo abrir la base de datos para el resumen")
             return {}
         e, t = db.enlaces.c, db.inmuebles_crudos.c
         semana = ahora() - dt.timedelta(days=7)
@@ -212,4 +290,5 @@ class Orquestador:
                 filas = c.execute(select(db.ejecuciones).order_by(db.ejecuciones.c.id.desc()).limit(n)).mappings()
                 return [{k: (con_zona(v) if isinstance(v, dt.datetime) else v) for k, v in f.items()} for f in filas]
         except Exception:
+            self._una_vez("ejecuciones", "No se pudieron leer las ejecuciones anteriores de la base de datos")
             return []

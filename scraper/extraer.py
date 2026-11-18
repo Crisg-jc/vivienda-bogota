@@ -10,10 +10,13 @@ Solo se extraen los campos de la lista blanca CAMPOS. Nombres, teléfonos, corre
 datos del anunciante nunca se leen ni se guardan (Ley 1581 de 2012, minimización).
 """
 import json
+import logging
 import re
 import unicodedata
 
 from bs4 import BeautifulSoup
+
+log = logging.getLogger("vivienda.extraer")
 
 CAMPOS = ["precio", "area", "habitaciones", "banos", "estrato", "parqueaderos",
           "antiguedad", "administracion", "localidad", "barrio", "tipo",
@@ -227,6 +230,10 @@ def extraer(html: str, url: str, patron_barrio_url: str | None = None) -> tuple[
         m = re.search(patron_barrio_url, url)
         if m:
             campos["barrio"] = m.group(1).replace("-", " ")
+            log.debug("Barrio tomado de la URL: %s", campos["barrio"])
+    log.debug("Extracción de %s: métodos=%s campos=%s", url, metodos or "ninguno", campos)
+    if not metodos:
+        log.warning("No se encontró ningún dato en %s (%d caracteres de HTML)", url, len(html))
     return campos, "+".join(metodos) or "ninguno"
 
 
@@ -248,4 +255,5 @@ def enlaces_detalle(html: str, base: str, patron: str) -> list[str]:
         if rx.match(url) and url not in vistos:
             vistos.add(url)
             salida.append(url)
+    log.debug("Listado: %d candidatos revisados, %d avisos individuales", len(candidatos), len(salida))
     return salida

@@ -6,4 +6,5 @@
   aviso.innerHTML = "Su navegador es demasiado antiguo para esta aplicaci&oacute;n. " +
     "Use una versi&oacute;n reciente de Chrome, Edge, Firefox, Safari, Opera o Samsung Internet.";
   document.body.insertBefore(aviso, document.body.firstChild);
+  if (window.REG) window.REG.error("Navegador demasiado antiguo: se mostró el aviso de navegador no compatible");
 })();

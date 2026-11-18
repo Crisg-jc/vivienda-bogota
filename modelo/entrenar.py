@@ -18,8 +18,10 @@ Si MLflow está instalado, cada entrenamiento queda registrado en mlruns/.
 import argparse
 import datetime as dt
 import json
+import logging
 import math
 import pathlib
+import time
 
 import joblib
 import numpy as np
@@ -36,6 +38,8 @@ from sklearn.tree import DecisionTreeRegressor
 
 from . import datos as D
 from .linea_base import LineaBase
+
+log = logging.getLogger("vivienda.modelo")
 
 ARTEFACTOS = D.RAIZ / "artefactos"
 MODELO = ARTEFACTOS / "modelo.joblib"
@@ -116,18 +120,26 @@ def referencia(X: pd.DataFrame) -> dict:
 
 
 def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
+    t0 = time.perf_counter()
     df = D.cargar(ruta)
     n = len(df)
+    log.info("Entrenamiento con %s (%s): %d avisos", ruta.name, tipo, n)
     if n < MINIMO_AVISOS:
+        log.warning("%s tiene %d avisos válidos; se necesitan al menos %d", ruta.name, n, MINIMO_AVISOS)
         raise SystemExit(f"{ruta.name} tiene {n} avisos válidos; se necesitan al menos {MINIMO_AVISOS}.")
     X, y = preparar(df), df[D.OBJETIVO].astype(float).to_numpy()
     Xe, Xp, ye, yp = train_test_split(X, y, test_size=0.2, random_state=SEMILLA)
+    log.info("División: %d para entrenar, %d para la prueba final", len(ye), len(yp))
+    log.debug("Vacíos por variable: %s", X.isna().sum().to_dict())
 
     cv, modelos = [], candidatos(len(ye))
     for nombre, m in modelos.items():
+        t = time.perf_counter()
         pred = cross_val_predict(clone(m), Xe, ye, cv=pliegues(len(ye)))
         cv.append({"modelo": nombre, **medir(ye, pred)})
+        log.info("Validación cruzada %-22s %s (%.1fs)", nombre, cv[-1], time.perf_counter() - t)
     mejor = min(cv, key=lambda r: r["mae"])
+    log.info("Modelo elegido: %s (menor error absoluto medio)", mejor["modelo"])
     base = next(r for r in cv if r["modelo"] == "Línea base")
 
     elegido = modelos[mejor["modelo"]]
@@ -138,6 +150,7 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     pred_p = clone(elegido).fit(Xe, ye).predict(Xp)
     dentro = np.abs(np.log(yp) - np.log(np.clip(pred_p, 1, None))) <= q_e
     prueba[mejor["modelo"]]["cobertura_rango"] = round(float(dentro.mean()), 3)
+    log.info("Prueba final: %s", prueba)
 
     final = clone(elegido).fit(X, y)
     q, esperados = cuantil_conformal(elegido, X, y, con_predicciones=True)
@@ -162,6 +175,10 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
                  "dominio": metricas["dominio"], "sha256": metricas["dataset"]["sha256"]}, MODELO)
     METRICAS.write_text(json.dumps(metricas, ensure_ascii=False, indent=2), encoding="utf-8")
     registrar_mlflow(metricas)
+    log.info("Modelo guardado en %s; métricas en %s. Entrenamiento total %.1fs (rango ±%.0f%%)",
+             MODELO, METRICAS, time.perf_counter() - t0, (math.exp(q) - 1) * 100)
+    if not metricas["supera_linea_base"]:
+        log.warning("El modelo elegido NO supera a la línea base: los datos todavía no alcanzan para aprender bien")
     return metricas
 
 
@@ -205,6 +222,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", help="CSV a usar (por defecto, el corte más reciente en datos/)")
     args = ap.parse_args(argv)
+    from comun import registro
+    registro.configurar("entrenar")
     if args.dataset:
         ruta = pathlib.Path(args.dataset)
         tipo = "demo" if ruta.resolve() == D.DEMO.resolve() else "real"

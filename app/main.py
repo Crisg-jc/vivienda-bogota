@@ -22,20 +22,25 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from comun import registro
+from comun.registro import cronometro
 from limpieza.normalizar import LOCALIDADES
 from modelo import datos as D
 from modelo import demo, entrenar, estimar
 
 from .automatizacion import Orquestador
 
-logging.basicConfig(level=os.environ.get("VIVIENDA_LOG", "INFO"),
-                    format="%(asctime)s %(levelname)s %(name)s %(message)s")
-log = logging.getLogger("vivienda")
+registro.configurar("app")      # si ya lo hizo `python -m app`, no hace nada
+log = logging.getLogger("vivienda.app")
+log_api = logging.getLogger("vivienda.api")
+log_nav = logging.getLogger("vivienda.navegador")
 ESTATICOS = pathlib.Path(__file__).parent / "static"
 ESTADO: dict = {}
 UMBRAL = 0.10        # ±10 % frente al precio esperado = "en línea con su zona"
@@ -44,35 +49,69 @@ UMBRAL = 0.10        # ±10 % frente al precio esperado = "en línea con su zona
 def preparar_estado() -> None:
     """Carga dataset y modelo y precalcula los resúmenes. Arma todo aparte y lo publica al final:
     las solicitudes que llegan mientras tanto siguen viendo los datos anteriores completos."""
+    t0 = time.perf_counter()
+    log.info("Preparando datos y modelo ...")
     ruta, tipo = D.ubicar()
+    log.info("Dataset elegido: %s (tipo %s)", ruta, tipo)
     if ruta is None:
         log.warning("No hay dataset en datos/. Se crean datos SINTÉTICOS de demostración.")
-        demo.main([])
+        with cronometro(log, "Crear datos de demostración"):
+            demo.main([])
         ruta, tipo = D.ubicar()
-    huella = D.huella(ruta)
-    art = estimar.cargar_modelo()
-    if art is None or art.get("sha256") != huella:
-        log.warning("Entrenando el modelo con %s ...", ruta.name)
-        entrenar.entrenar(ruta, tipo)
+        log.info("Dataset de demostración: %s", ruta)
+    with cronometro(log, "Calcular huella del dataset", logging.DEBUG):
+        huella = D.huella(ruta)
+    log.debug("Huella sha256 del dataset: %s", huella)
+    with cronometro(log, "Cargar modelo guardado", logging.DEBUG):
         art = estimar.cargar_modelo()
-    df = comparar_con_esperado(D.cargar(ruta), art)
-    nuevo = {"df": df, "tipo": tipo, "ruta": ruta, "huella": huella, "art": art,
-             "metricas": json.loads(entrenar.METRICAS.read_text(encoding="utf-8")),
-             "mercado": calcular_mercado(df)}
-    nuevo["zonas"] = calcular_zonas(df, art)
+    if art is None:
+        log.warning("No hay modelo entrenado en artefactos/: se entrena ahora con %s", ruta.name)
+    elif art.get("sha256") != huella:
+        log.warning("El modelo guardado se entrenó con otro dataset (huella %s…, actual %s…): se reentrena",
+                    str(art.get("sha256"))[:10], huella[:10])
+    else:
+        log.info("Modelo guardado vigente: %s", art.get("nombre"))
+    if art is None or art.get("sha256") != huella:
+        with cronometro(log, f"Entrenar el modelo con {ruta.name}"):
+            entrenar.entrenar(ruta, tipo)
+        art = estimar.cargar_modelo()
+    with cronometro(log, "Cargar dataset en memoria", logging.DEBUG):
+        df = D.cargar(ruta)
+    log.info("Dataset cargado: %d filas, %d columnas", len(df), df.shape[1])
+    log.debug("Columnas: %s", list(df.columns))
+    nulos = {c: int(n) for c, n in df.isna().sum().items() if n}
+    if nulos:
+        log.debug("Valores vacíos por columna: %s", nulos)
+    with cronometro(log, "Comparar cada aviso con su precio esperado", logging.DEBUG):
+        df = comparar_con_esperado(df, art)
+    log.info("Comparación con el esperado: %s", df["comparacion"].value_counts().to_dict())
+    nuevo = {"df": df, "tipo": tipo, "ruta": ruta, "huella": huella, "art": art}
+    with cronometro(log, "Leer métricas del modelo", logging.DEBUG):
+        nuevo["metricas"] = json.loads(entrenar.METRICAS.read_text(encoding="utf-8"))
+    with cronometro(log, "Calcular resúmenes de mercado", logging.DEBUG):
+        nuevo["mercado"] = calcular_mercado(df)
+    with cronometro(log, "Calcular estadísticas por zona", logging.DEBUG):
+        nuevo["zonas"] = calcular_zonas(df, art)
+    sin_datos = [z["nombre"] for z in nuevo["zonas"]["localidades"] if not z["n"]]
+    if sin_datos:
+        log.info("Localidades sin avisos en este dataset: %s", ", ".join(sin_datos))
     ESTADO.update(nuevo)
     ESTADO.setdefault("arranque", time.time())
-    log.info("Listo: %s (%s), %d avisos, modelo %s", ruta.name, tipo, len(df), art["nombre"])
+    log.info("Listo en %.1fs: %s (%s), %d avisos, modelo %s", time.perf_counter() - t0, ruta.name, tipo,
+             len(df), art["nombre"])
 
 
 def recargar_si_cambio() -> None:
     """La llama el orquestador: si el ciclo publicó un dataset nuevo, la app lo adopta."""
     ruta, _ = D.ubicar()
     if ruta is None or "ruta" not in ESTADO:
+        log.debug("Revisión de dataset: nada que comparar todavía (ruta=%s)", ruta)
         return
     if ruta != ESTADO["ruta"] or D.huella(ruta) != ESTADO["huella"]:
-        log.info("Dataset nuevo (%s): recargando datos y modelo", ruta.name)
+        log.info("Dataset nuevo (%s, antes %s): recargando datos y modelo", ruta.name, ESTADO["ruta"].name)
         preparar_estado()
+    else:
+        log.debug("Revisión de dataset: sin cambios (%s)", ruta.name)
 
 
 ORQUESTADOR = Orquestador(recargar_si_cambio)
@@ -80,10 +119,18 @@ ORQUESTADOR = Orquestador(recargar_si_cambio)
 
 @asynccontextmanager
 async def ciclo(app: FastAPI):
-    preparar_estado()
+    log.info("Arranque del servidor web")
+    try:
+        preparar_estado()
+    except Exception:
+        log.critical("No se pudo preparar el dataset o el modelo: la aplicación no puede responder. "
+                     "Ejecute `python -m app.diagnostico` para ver la causa.", exc_info=True)
+        raise
     ORQUESTADOR.iniciar()
     yield
+    log.info("Apagando: deteniendo el ciclo automático")
     ORQUESTADOR.detener()
+    log.info("Servidor detenido")
 
 
 def comparar_con_esperado(df: pd.DataFrame, art: dict) -> pd.DataFrame:
@@ -91,8 +138,11 @@ def comparar_con_esperado(df: pd.DataFrame, art: dict) -> pd.DataFrame:
     (validación cruzada al entrenar), y su diferencia porcentual frente al precio pedido."""
     esperados = art.get("esperados")
     if esperados is not None and len(esperados) == len(df):
+        log.debug("Precio esperado: se usan las predicciones fuera de muestra guardadas (%d)", len(esperados))
         df["precio_esperado"] = np.asarray(esperados, float)
     else:   # modelo de una versión anterior: se predice, avisando que es dentro de muestra
+        log.warning("El modelo no trae predicciones fuera de muestra para estas %d filas (trae %s): "
+                    "se predice dentro de muestra", len(df), None if esperados is None else len(esperados))
         df["precio_esperado"] = art["modelo"].predict(entrenar.preparar(df))
     df["diferencia_pct"] = df["precio"] / df["precio_esperado"] - 1
     df["comparacion"] = np.select([df["diferencia_pct"] < -UMBRAL, df["diferencia_pct"] > UMBRAL],
@@ -116,18 +166,39 @@ CABECERAS = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-ori
 @app.middleware("http")
 async def registro_y_seguridad(request: Request, call_next):
     """Cabeceras de seguridad, identificador de solicitud y una línea de registro por solicitud."""
-    rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    rid = (request.headers.get("x-request-id") or uuid.uuid4().hex[:12])[:40]
+    marca = registro.RID.set(rid)
     inicio = time.perf_counter()
-    respuesta = await call_next(request)
+    ruta = request.url.path
+    sondeo = ruta in ("/api/automatizacion", "/api/salud", "/api/registro-cliente")   # frecuentes: solo en DEBUG
+    if ruta.startswith("/api/") and not sondeo:
+        log_api.debug("INICIO %s %s%s cliente=%s navegador=%s", request.method, ruta,
+                      f"?{request.url.query}" if request.url.query else "",
+                      request.client.host if request.client else "?", request.headers.get("user-agent", "-")[:160])
+    try:
+        respuesta = await call_next(request)
+    except Exception:
+        log_api.exception("Error no atrapado en %s %s tras %.1fms", request.method, ruta,
+                          (time.perf_counter() - inicio) * 1000)
+        respuesta = JSONResponse({"detail": "Error interno. Revise datos/registros/errores.log.", "rid": rid},
+                                 status_code=500)
     ms = (time.perf_counter() - inicio) * 1000
     respuesta.headers.update(CABECERAS)
     respuesta.headers["X-Request-ID"] = rid
     if not request.url.path.startswith("/docs") and not request.url.path.startswith("/openapi"):
         respuesta.headers["Content-Security-Policy"] = CSP
-    if request.url.path.startswith("/api/"):
+    if ruta.startswith("/api/"):
         respuesta.headers.setdefault("Cache-Control", "no-store")
-        nivel = logging.DEBUG if request.url.path == "/api/automatizacion" else logging.INFO  # se consulta cada pocos segundos
-        log.log(nivel, "%s %s %d %.1fms rid=%s", request.method, request.url.path, respuesta.status_code, ms, rid)
+        codigo = respuesta.status_code
+        nivel = (logging.ERROR if codigo >= 500 else logging.WARNING if codigo >= 400
+                 else logging.DEBUG if sondeo else logging.INFO)
+        lento = "  LENTA" if ms > 1500 else ""
+        log_api.log(nivel, "%s %s -> %d en %.1fms rid=%s%s", request.method, ruta, codigo, ms, rid, lento)
+    elif respuesta.status_code >= 400:
+        log_api.warning("%s %s -> %d (archivo de la interfaz)", request.method, ruta, respuesta.status_code)
+    else:
+        log_api.debug("%s %s -> %d en %.1fms", request.method, ruta, respuesta.status_code, ms)
+    registro.RID.reset(marca)
     return respuesta
 
 
@@ -203,7 +274,11 @@ class Entrada(BaseModel):
 @app.post("/api/estimar")
 def api_estimar(e: Entrada):
     datos = e.model_dump()
+    t = time.perf_counter()
+    log_api.debug("Estimar con: %s", datos)
     res = estimar.estimar(ESTADO["art"], datos)
+    log_api.debug("Modelo %s -> precio %.0f (rango %.0f–%.0f), %.0f/m²", ESTADO["art"]["nombre"], res["precio"],
+                  res["minimo"], res["maximo"], res["precio_m2"])
     df = ESTADO["df"]
     mismo = df.loc[df["estrato"] == e.estrato, "precio_m2"].dropna()
     res["contexto"] = {
@@ -219,6 +294,12 @@ def api_estimar(e: Entrada):
         "p90_precio": z["p90_precio"]}
     res["modelo"] = ESTADO["art"]["nombre"]
     res["demo"] = ESTADO["tipo"] == "demo"
+    if e.localidad and res["zona"] is None:
+        log_api.info("Estimación en %s sin estadísticas de zona (no hay avisos de esa localidad)", e.localidad)
+    log_api.info("Estimación: %s m², estrato %s, %s -> $%s (rango $%s–$%s), %d parecidos, %.0fms",
+                 e.area_m2, e.estrato, e.localidad or "sin localidad", f"{res['precio']:,.0f}",
+                 f"{res['minimo']:,.0f}", f"{res['maximo']:,.0f}", len(res["similares"]),
+                 (time.perf_counter() - t) * 1000)
     return res
 
 
@@ -320,9 +401,11 @@ def api_zonas():
 def api_zona(nombre: str):
     z = next((z for z in ESTADO["zonas"]["localidades"] if z["nombre"] == nombre), None)
     if z is None:
+        log_api.warning("Zona pedida que no existe: %r", nombre)
         raise HTTPException(404, "Localidad desconocida.")
     df = ESTADO["df"]
     g = df[df["localidad"] == nombre]
+    log_api.debug("Zona %s: %d avisos", nombre, len(g))
     if len(g) == 0:
         return {"zona": z, "barrios": [], "tipico": None, "debajo": [], "encima": []}
     barrios = []
@@ -365,6 +448,11 @@ def api_avisos(localidad: str | None = None, estrato: int | None = Query(None, g
     df = df.sort_values(col, ascending=not orden.startswith("-"))
     total = len(df)
     pag = df.iloc[(pagina - 1) * por_pagina: pagina * por_pagina]
+    log_api.debug("Avisos: filtros localidad=%s barrio=%s comparacion=%s estrato=%s precio_max=%s area_min=%s "
+                  "orden=%s -> %d resultados, página %d con %d", localidad, barrio, comparacion, estrato,
+                  precio_max, area_min, orden, total, pagina, len(pag))
+    if pagina > 1 and len(pag) == 0:
+        log_api.info("Página %d de avisos vacía (hay %d resultados)", pagina, total)
     return {"total": total, "pagina": pagina, "por_pagina": por_pagina,
             "avisos": [aviso(r) for r in pag.to_dict("records")]}
 
@@ -388,11 +476,73 @@ def api_automatizacion(request: Request):
 def api_automatizacion_ejecutar(request: Request):
     """Solo desde el mismo computador (o con VIVIENDA_TOKEN_ADMIN): nadie de afuera dispara visitas al portal."""
     if not es_local(request):
+        log_api.warning("Intento de iniciar un ciclo desde fuera del computador: %s",
+                        request.client.host if request.client else "?")
         raise HTTPException(403, "Solo se puede iniciar un ciclo desde el computador donde corre la aplicación.")
     ok, mensaje = ORQUESTADOR.ejecutar_ahora()
+    log_api.info("Pedido manual de ciclo: %s (%s)", "aceptado" if ok else "rechazado", mensaje)
     if not ok:
         raise HTTPException(409, mensaje)
     return {"mensaje": mensaje}
+
+
+# ---------------------------------------------------------------- registros (logs)
+
+class RegistroCliente(BaseModel):
+    nivel: Literal["debug", "info", "warn", "error"] = "info"
+    mensaje: str = Field(max_length=2000)
+    detalle: str | None = Field(default=None, max_length=6000)
+    pagina: str | None = Field(default=None, max_length=500)
+    navegador: str | None = Field(default=None, max_length=400)
+    sesion: str | None = Field(default=None, max_length=40)
+
+
+_CUPO = {"ventana": 0.0, "n": 0}
+NIVELES_NAV = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}
+
+
+@app.post("/api/registro-cliente", include_in_schema=False, status_code=204)
+def api_registro_cliente(lotes: list[RegistroCliente]):
+    """El navegador manda aquí sus errores y eventos: así quedan en el mismo archivo que los del servidor.
+    Con cupo de 300 mensajes por minuto para que una página en bucle no llene el disco."""
+    ahora = time.time()
+    if ahora - _CUPO["ventana"] > 60:
+        if _CUPO["n"] > 300:
+            log_nav.warning("Se descartaron %d mensajes del navegador en el último minuto (cupo)", _CUPO["n"] - 300)
+        _CUPO.update(ventana=ahora, n=0)
+    for r in lotes[:50]:
+        _CUPO["n"] += 1
+        if _CUPO["n"] > 300:
+            continue
+        texto = r.mensaje.replace("\n", " | ")
+        extra = f" | detalle: {r.detalle}" if r.detalle else ""
+        nav = f" | {r.navegador}" if r.navegador else ""
+        log_nav.log(NIVELES_NAV[r.nivel], "[sesión %s] %s%s | página %s%s", r.sesion or "?", texto, extra,
+                    r.pagina or "-", nav)
+    return None
+
+
+@app.get("/api/registros", include_in_schema=False, response_class=PlainTextResponse)
+def api_registros(request: Request, n: int = Query(400, ge=10, le=5000), errores: bool = False):
+    """Últimas líneas del registro, para mirarlas en el navegador. Solo desde el mismo computador."""
+    if not es_local(request):
+        raise HTTPException(403, "Los registros solo se pueden ver desde el computador donde corre la aplicación.")
+    lineas = registro.ultimas_lineas(n, solo_errores=errores)
+    cabecera = (f"# {registro.ERRORES if errores else registro.GENERAL} — últimas {len(lineas)} líneas\n"
+                f"# Más detalle: cierre la app y ábrala con  python -m app --depurar\n\n")
+    return cabecera + ("\n".join(lineas) if lineas else "(todavía no hay nada registrado)")
+
+
+@app.get("/api/diagnostico", include_in_schema=False)
+def api_diagnostico(request: Request, texto: bool = False):
+    """Las mismas revisiones de `python -m app.diagnostico` (JSON, o texto con ?texto=1).
+    Solo desde el mismo computador."""
+    if not es_local(request):
+        raise HTTPException(403, "El diagnóstico solo se puede ver desde el computador donde corre la aplicación.")
+    from . import diagnostico
+    r = diagnostico.revisar(con_red=False)
+    log.info("Diagnóstico pedido desde la página: %s", r["resumen"])
+    return PlainTextResponse(diagnostico.texto(r)) if texto else r
 
 
 # ---------------------------------------------------------------- modelo
@@ -424,6 +574,37 @@ def inicio():
 
 @app.exception_handler(KeyError)
 async def sin_estado(request: Request, exc: KeyError):
-    """Un KeyError aquí significa que el arranque no terminó: se responde 503 sin filtrar detalles internos."""
-    log.error("KeyError en %s: %s", request.url.path, exc)
+    """Un KeyError aquí suele significar que el arranque no terminó: 503 sin filtrar detalles internos.
+    Si el estado sí está cargado, es un error de programa: se registra con la traza completa."""
+    if "art" in ESTADO:
+        log_api.error("KeyError %s en %s con el estado ya cargado (error de programa)", exc, request.url.path,
+                      exc_info=exc)
+        return JSONResponse({"detail": "Error interno. Revise datos/registros/errores.log.",
+                             "rid": registro.RID.get()}, status_code=500)
+    log_api.error("KeyError en %s: %s (el dataset o el modelo todavía no están cargados)", request.url.path, exc)
     return JSONResponse({"detail": "La aplicación todavía no cargó el dataset ni el modelo."}, status_code=503)
+
+
+@app.exception_handler(RequestValidationError)
+async def datos_invalidos(request: Request, exc: RequestValidationError):
+    """Datos mal enviados (p. ej. área fuera de rango): se registra qué campo y qué valor llegaron."""
+    errores = [{"campo": ".".join(str(p) for p in e.get("loc", [])), "problema": e.get("msg"),
+                "valor": str(e.get("input"))[:120]} for e in exc.errors()]
+    log_api.warning("Datos inválidos en %s %s: %s", request.method, request.url.path, errores)
+    return JSONResponse({"detail": exc.errors() and [
+        {"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")} for e in exc.errors()]}, status_code=422)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def error_http(request: Request, exc: StarletteHTTPException):
+    nivel = logging.DEBUG if exc.status_code == 404 and not request.url.path.startswith("/api/") else logging.INFO
+    log_api.log(nivel, "%s %s -> %d: %s", request.method, request.url.path, exc.status_code, exc.detail)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=getattr(exc, "headers", None))
+
+
+@app.exception_handler(Exception)
+async def error_inesperado(request: Request, exc: Exception):
+    log_api.error("Error inesperado en %s %s: %s: %s", request.method, request.url.path, type(exc).__name__, exc,
+                  exc_info=exc)
+    return JSONResponse({"detail": "Error interno. Revise datos/registros/errores.log.", "rid": registro.RID.get()},
+                        status_code=500)
