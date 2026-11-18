@@ -106,6 +106,11 @@ class Orquestador:
         if not aj["activo"]:
             self.proximo = ahora() + dt.timedelta(minutes=10)
             return
+        # Sin portales autorizados no se lanza nada; se vuelve a mirar la configuración cada minuto,
+        # así el ciclo arranca solo apenas alguien pone terminos_revisados: true (sin reiniciar).
+        if not any(p.get("habilitado") and p.get("terminos_revisados") for p in conf["portales"].values()):
+            self.proximo = ahora() + dt.timedelta(minutes=1)
+            return
         cy.CARPETA.mkdir(parents=True, exist_ok=True)
         if REGISTRO.exists() and REGISTRO.stat().st_size > 5_000_000:
             REGISTRO.replace(REGISTRO.with_suffix(".log.1"))
