@@ -46,11 +46,45 @@ ESTADO: dict = {}
 UMBRAL = 0.10        # ±10 % frente al precio esperado = "en línea con su zona"
 
 
+def asegurar_dataset_real() -> None:
+    """Si la base ya tiene avisos recolectados pero en datos/ no hay ningún dataset_vN.csv (base
+    copiada de otra carpeta, o un ciclo que no alcanzó a publicar), se construye ahora mismo a
+    partir de la base, sin visitar ningún portal. Así la app nunca muestra la demostración
+    teniendo datos reales."""
+    ruta, tipo = D.ubicar()
+    if tipo == "real" or os.environ.get("VIVIENDA_DATASET"):
+        return
+    try:
+        from sqlalchemy import func, select
+
+        from scraper import db
+        eng = db.motor()
+        with eng.begin() as c:
+            n = c.scalar(select(func.count()).select_from(db.inmuebles_crudos)) or 0
+    except Exception:
+        log.exception("No se pudo revisar la base de datos para construir el dataset real")
+        return
+    if n == 0:
+        log.info("La base no tiene avisos recolectados todavía: se usará la demostración")
+        return
+    log.warning("La base tiene %d avisos recolectados pero no hay dataset_vN.csv en datos/: se construye ahora", n)
+    from limpieza import construir_dataset as cd
+    try:
+        with cronometro(log, "Construir dataset real desde la base"):
+            corte = cd.construir(notas="Construido al abrir la aplicación", eng=eng)
+        log.info("Dataset real construido: %s", corte)
+    except SystemExit as e:
+        log.warning("No se pudo construir el dataset real: %s", e)
+    except Exception:
+        log.exception("Falló la construcción del dataset real; se sigue con la demostración")
+
+
 def preparar_estado() -> None:
     """Carga dataset y modelo y precalcula los resúmenes. Arma todo aparte y lo publica al final:
     las solicitudes que llegan mientras tanto siguen viendo los datos anteriores completos."""
     t0 = time.perf_counter()
     log.info("Preparando datos y modelo ...")
+    asegurar_dataset_real()
     ruta, tipo = D.ubicar()
     log.info("Dataset elegido: %s (tipo %s)", ruta, tipo)
     if ruta is None:
@@ -72,8 +106,21 @@ def preparar_estado() -> None:
     else:
         log.info("Modelo guardado vigente: %s", art.get("nombre"))
     if art is None or art.get("sha256") != huella:
-        with cronometro(log, f"Entrenar el modelo con {ruta.name}"):
-            entrenar.entrenar(ruta, tipo)
+        try:
+            with cronometro(log, f"Entrenar el modelo con {ruta.name}"):
+                entrenar.entrenar(ruta, tipo)
+        except SystemExit as e:
+            # Muy pocos avisos reales todavía: se usa la demostración hasta que haya suficientes.
+            if tipo == "demo":
+                raise
+            log.warning("No se puede entrenar con %s (%s). Mientras tanto se usa la demostración.", ruta.name, e)
+            ESTADO["ruta_descartada"] = ruta      # el orquestador no vuelve a intentarlo cada 20 s
+            if not D.DEMO.exists():
+                demo.main([])
+            ruta, tipo, huella = D.DEMO, "demo", D.huella(D.DEMO)
+            art = estimar.cargar_modelo()
+            if art is None or art.get("sha256") != huella:
+                entrenar.entrenar(ruta, tipo)
         art = estimar.cargar_modelo()
     with cronometro(log, "Cargar dataset en memoria", logging.DEBUG):
         df = D.cargar(ruta)
@@ -108,8 +155,15 @@ def recargar_si_cambio() -> None:
         log.debug("Revisión de dataset: nada que comparar todavía (ruta=%s)", ruta)
         return
     if ruta != ESTADO["ruta"] or D.huella(ruta) != ESTADO["huella"]:
+        if ruta == ESTADO.get("ruta_descartada"):
+            return
         log.info("Dataset nuevo (%s, antes %s): recargando datos y modelo", ruta.name, ESTADO["ruta"].name)
-        preparar_estado()
+        try:
+            preparar_estado()
+        except (Exception, SystemExit):
+            # Un SystemExit en este hilo lo mataría en silencio: se registra y se siguen usando los datos anteriores.
+            log.exception("No se pudo cargar el dataset nuevo %s; se siguen usando los datos anteriores", ruta.name)
+            ESTADO["ruta_descartada"] = ruta
     else:
         log.debug("Revisión de dataset: sin cambios (%s)", ruta.name)
 
@@ -195,7 +249,10 @@ async def registro_y_seguridad(request: Request, call_next):
         lento = "  LENTA" if ms > 1500 else ""
         log_api.log(nivel, "%s %s -> %d en %.1fms rid=%s%s", request.method, ruta, codigo, ms, rid, lento)
     elif respuesta.status_code >= 400:
-        log_api.warning("%s %s -> %d (archivo de la interfaz)", request.method, ruta, respuesta.status_code)
+        # Chrome pide estos archivos solo cuando las herramientas de desarrollo (F12) están abiertas.
+        ruido = ruta.startswith("/.well-known/") or ruta.endswith(".map")
+        log_api.log(logging.DEBUG if ruido else logging.WARNING, "%s %s -> %d (archivo de la interfaz)",
+                    request.method, ruta, respuesta.status_code)
     else:
         log_api.debug("%s %s -> %d en %.1fms", request.method, ruta, respuesta.status_code, ms)
     registro.RID.reset(marca)

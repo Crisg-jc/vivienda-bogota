@@ -277,7 +277,7 @@ async function estimarAhora() {
   try {
     const r = await api("/api/estimar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(datos) });
     if (id !== ultimaPeticion) { REG.debug(`Estimación ${id} descartada: llegó una más nueva (${ultimaPeticion})`); return; }
-    REG.info(`Estimación: ${datos.area_m2} m², estrato ${datos.estrato}, ${datos.localidad || "sin localidad"} -> ${corto(r.precio)} (${corto(r.minimo)}–${corto(r.maximo)})`);
+    REG.debug(`Estimación: ${datos.area_m2} m², estrato ${datos.estrato}, ${datos.localidad || "sin localidad"} -> ${corto(r.precio)} (${corto(r.minimo)}–${corto(r.maximo)})`);
     pintarResultado(r, datos);
   } catch (e) {
     REG.error("Falló la estimación", { mensaje: e.message, datos, pila: e.stack });

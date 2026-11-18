@@ -91,7 +91,12 @@ class Orquestador:
                 log.warning("Portal %s: falta poner terminos_revisados: true en config/portales.yaml "
                             "(después de leer sus términos). Mientras tanto no se recolecta nada de él.", nombre)
             else:
-                log.info("Portal %s: autorizado (revisó %s)", nombre, p.get("revisado_por") or "sin nombre")
+                quien = str(p.get("revisado_por") or "")
+                if not quien or "NOMBRE" in quien.upper():
+                    log.warning("Portal %s: autorizado, pero revisado_por no tiene un nombre real (%r). "
+                                "Ponga el nombre de quien leyó los términos.", nombre, quien)
+                else:
+                    log.info("Portal %s: autorizado (revisó %s)", nombre, quien)
         contacto = str(conf.get("general", {}).get("user_agent", ""))
         if "cambiar" in contacto.lower() or "example" in contacto.lower() or "@" not in contacto:
             log.warning("El user_agent de config/portales.yaml no tiene un correo de contacto real: %r", contacto)

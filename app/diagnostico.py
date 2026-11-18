@@ -129,7 +129,12 @@ def revisar(con_red: bool = True) -> dict:
                           "Lea los términos del portal y ponga terminos_revisados: true y revisado_por: su nombre")
             else:
                 autorizados.append(nombre)
-                inf.ok("config", f"Portal {nombre}", f"autorizado (revisado por {p.get('revisado_por') or '¿?'})")
+                quien = str(p.get("revisado_por") or "")
+                if not quien or "NOMBRE" in quien.upper():
+                    inf.aviso("config", f"Portal {nombre}", f"autorizado, pero revisado_por = {quien!r}",
+                              "Ponga en revisado_por el nombre real de quien leyó los términos")
+                else:
+                    inf.ok("config", f"Portal {nombre}", f"autorizado (revisado por {quien})")
         if not autorizados:
             inf.aviso("config", "Recolección automática", "ningún portal autorizado: no se recolectarán datos",
                       "Vea el punto anterior")
@@ -153,6 +158,10 @@ def revisar(con_red: bool = True) -> dict:
             cuenta = {t.name: c.scalar(select(func.count()).select_from(t)) for t in
                       (db.enlaces, db.inmuebles_crudos, db.inmuebles_limpios, db.cambios, db.ejecuciones)}
         inf.ok("datos", "Base de datos", ", ".join(f"{k}={v:,}" for k, v in cuenta.items()))
+        from modelo import datos as D
+        if cuenta["inmuebles_crudos"] and D.ubicar()[1] != "real":
+            inf.aviso("datos", "Dataset real", f"la base tiene {cuenta['inmuebles_crudos']:,} avisos pero no hay "
+                      "dataset_vN.csv en datos/", "Se construye solo al abrir la aplicación (iniciar.bat)")
         if cuenta["inmuebles_crudos"] == 0:
             inf.aviso("datos", "Avisos guardados", "la base no tiene avisos: la app usará datos de demostración",
                       "Copie su vivienda.db a datos/ o autorice un portal para que el ciclo recolecte")

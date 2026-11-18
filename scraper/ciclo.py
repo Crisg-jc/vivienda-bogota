@@ -356,9 +356,11 @@ def actualizar_dataset_y_modelo(ciclo: Ciclo, hubo_cambios: bool, entrenar_model
     if not hubo_cambios and hay_csv:
         log.info("Sin cambios en los avisos: no se construye un dataset nuevo")
         return None
+    if not hay_csv:
+        log.info("No hay ningún dataset_vN.csv en datos/: se construye uno aunque el contenido no haya cambiado")
     ciclo.progreso("Limpiando y versionando el dataset")
     try:
-        corte = cd.construir(notas="Ciclo automático", solo_si_cambia=True, eng=ciclo.eng,
+        corte = cd.construir(notas="Ciclo automático", solo_si_cambia=hay_csv, eng=ciclo.eng,
                              conservar=aj["versiones_csv_a_conservar"])
     except SystemExit as e:           # todavía no hay avisos guardados
         log.info("No se construyó el dataset: %s", e)
