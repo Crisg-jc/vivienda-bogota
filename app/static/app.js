@@ -1012,10 +1012,12 @@ $("#ac-ejecutar").addEventListener("click", async () => {
     REG.info("Ciclo iniciado a mano desde la página");
     $("#ac-nota").textContent = "Ciclo iniciado.";
   } catch (e) {
-    $("#ac-nota").textContent = `No se pudo iniciar: ${e.message}`;
+    // 409 = ya hay un ciclo corriendo (la página aún no se había enterado): no es una falla.
+    $("#ac-nota").textContent = /ciclo en curso/i.test(e.message)
+      ? "Ya se está actualizando: el avance aparece arriba." : `No se pudo iniciar: ${e.message}`;
   } finally {
     boton.disabled = false;
-    setTimeout(cargarActualizacion, 1500);
+    setTimeout(cargarActualizacion, 300);
   }
 });
 

@@ -47,6 +47,8 @@ METRICAS = ARTEFACTOS / "metricas.json"
 SEMILLA = 42
 NIVEL_RANGO = 0.80          # el rango de precio debe contener el valor real 8 de cada 10 veces
 MINIMO_AVISOS = 12
+# Se sube cuando cambia la forma de entrenar o de predecir: la app reentrena sola los modelos viejos.
+VERSION_MODELO = 2
 
 
 def preparar(df: pd.DataFrame) -> pd.DataFrame:
@@ -172,7 +174,8 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     ARTEFACTOS.mkdir(exist_ok=True)
     joblib.dump({"modelo": final, "nombre": mejor["modelo"], "q_log": q, "referencia": referencia(X),
                  "esperados": [round(float(v)) for v in esperados],
-                 "dominio": metricas["dominio"], "sha256": metricas["dataset"]["sha256"]}, MODELO)
+                 "dominio": metricas["dominio"], "sha256": metricas["dataset"]["sha256"],
+                 "version": VERSION_MODELO}, MODELO)
     METRICAS.write_text(json.dumps(metricas, ensure_ascii=False, indent=2), encoding="utf-8")
     registrar_mlflow(metricas)
     log.info("Modelo guardado en %s; métricas en %s. Entrenamiento total %.1fs (rango ±%.0f%%)",

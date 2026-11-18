@@ -192,7 +192,8 @@ def revisar(con_red: bool = True) -> dict:
                       "Se entrena solo al abrir la app; o: python -m modelo.entrenar")
             return
         ruta, _ = D.ubicar()
-        vigente = ruta is not None and art.get("sha256") == D.huella(ruta)
+        vigente = (ruta is not None and art.get("sha256") == D.huella(ruta)
+                   and art.get("version") == entrenar.VERSION_MODELO)
         (inf.ok if vigente else inf.aviso)("modelo", "Modelo", f"{art['nombre']}"
                                            + ("" if vigente else " (entrenado con otro dataset; se reentrena al abrir)"))
         m = json.loads(entrenar.METRICAS.read_text(encoding="utf-8"))

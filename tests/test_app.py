@@ -112,7 +112,10 @@ def test_cabeceras_de_seguridad_y_cache(cliente):
     assert r.headers["x-frame-options"] == "DENY"
     assert r.headers["x-request-id"]
     assert c.get("/api/estado").headers["cache-control"] == "no-store"
-    assert "max-age" in c.get("/static/app.js").headers["cache-control"]
+    assert c.get("/static/app.js").headers["cache-control"] == "no-cache"     # siempre la versión actual
+    assert "max-age" in c.get("/static/vendor/leaflet/leaflet.js").headers["cache-control"]
+    etag = c.get("/static/app.js").headers["etag"]
+    assert c.get("/static/app.js", headers={"If-None-Match": etag}).status_code == 304
 
 
 def test_salud_y_compresion(cliente):
@@ -189,3 +192,16 @@ def test_automatizacion_apagada_en_pruebas(cliente):
     a = c.get("/api/automatizacion").json()
     assert a["situacion"] == "apagado" and "base" in a
     assert c.post("/api/automatizacion/ejecutar").status_code == 409
+
+
+def test_linea_base_no_abarata_un_estrato_sin_datos():
+    """Un estrato sin avisos se deduce de la tendencia, no de la mediana de toda la ciudad."""
+    import pandas as pd
+
+    from modelo.linea_base import LineaBase
+    filas = [(e, a) for e in (2, 3, 4) for a in (50, 60, 70, 80)] + [(6, 100), (6, 120), (6, 90)]
+    X = pd.DataFrame({"localidad": "Chapinero", "estrato": [e for e, _ in filas], "area_m2": [a for _, a in filas]})
+    y = [a * {2: 3e6, 3: 4.2e6, 4: 6e6, 6: 11e6}[e] for e, a in filas]
+    m = LineaBase().fit(X, y)
+    p = m.predict(pd.DataFrame({"localidad": "Suba", "estrato": [1, 2, 3, 4, 5, 6], "area_m2": 100}))
+    assert all(p[i] < p[i + 1] for i in range(5)), p

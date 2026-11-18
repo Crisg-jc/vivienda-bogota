@@ -103,9 +103,12 @@ def preparar_estado() -> None:
     elif art.get("sha256") != huella:
         log.warning("El modelo guardado se entrenó con otro dataset (huella %s…, actual %s…): se reentrena",
                     str(art.get("sha256"))[:10], huella[:10])
+    elif art.get("version") != entrenar.VERSION_MODELO:
+        log.warning("El modelo guardado es de una versión anterior del código (%s, actual %s): se reentrena",
+                    art.get("version"), entrenar.VERSION_MODELO)
     else:
         log.info("Modelo guardado vigente: %s", art.get("nombre"))
-    if art is None or art.get("sha256") != huella:
+    if art is None or art.get("sha256") != huella or art.get("version") != entrenar.VERSION_MODELO:
         try:
             with cronometro(log, f"Entrenar el modelo con {ruta.name}"):
                 entrenar.entrenar(ruta, tipo)
@@ -119,7 +122,7 @@ def preparar_estado() -> None:
                 demo.main([])
             ruta, tipo, huella = D.DEMO, "demo", D.huella(D.DEMO)
             art = estimar.cargar_modelo()
-            if art is None or art.get("sha256") != huella:
+            if art is None or art.get("sha256") != huella or art.get("version") != entrenar.VERSION_MODELO:
                 entrenar.entrenar(ruta, tipo)
         art = estimar.cargar_modelo()
     with cronometro(log, "Cargar dataset en memoria", logging.DEBUG):
@@ -612,12 +615,14 @@ def api_modelo():
 # ---------------------------------------------------------------- interfaz
 
 class Estaticos(StaticFiles):
-    """Archivos de la interfaz con caché de una hora (las fuentes y Leaflet, un día)."""
+    """Leaflet y las fuentes se guardan un día en el navegador. Los archivos propios (app.js,
+    estilos, mapas) se revalidan en cada carga: el navegador pregunta y el servidor contesta 304
+    si no cambiaron. Así, después de actualizar la aplicación nadie se queda con el app.js viejo."""
 
     async def get_response(self, path, scope):
         r = await super().get_response(path, scope)
-        if r.status_code == 200:
-            r.headers["Cache-Control"] = f"public, max-age={86400 if path.startswith('vendor/') else 3600}"
+        if r.status_code in (200, 304):
+            r.headers["Cache-Control"] = "public, max-age=86400" if path.startswith("vendor/") else "no-cache"
         return r
 
 
@@ -626,7 +631,7 @@ app.mount("/static", Estaticos(directory=ESTATICOS), name="static")
 
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def inicio():
-    return FileResponse(ESTATICOS / "index.html")
+    return FileResponse(ESTATICOS / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.exception_handler(KeyError)
