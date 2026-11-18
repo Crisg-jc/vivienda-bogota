@@ -35,7 +35,18 @@
     <p>Los avisos fueron creados por un programa solo para probar la aplicación. Para usar datos reales, siga la sección "Recolectar datos reales" del README y reinicie la aplicación: el aviso desaparece solo.</p>
   </details>
 
+  <div class="aviso-fuente" id="aviso-fuente" role="status" hidden><p id="aviso-fuente-texto"></p></div>
+
   <main>
+    <!-- ============================================================ SIN DATOS REALES -->
+    <section class="sin-datos" id="sin-datos" aria-labelledby="t-sin-datos" hidden>
+      <h1 id="t-sin-datos">Todavía no hay avisos reales suficientes para estimar</h1>
+      <p id="sd-motivo"></p>
+      <p>Esta página no muestra datos inventados. Mientras la recolección trabaja, aquí se ve su avance; cuando haya avisos suficientes, la página se actualiza sola.</p>
+      <dl class="cifras-base" id="sd-base"></dl>
+      <p class="como-leer" id="sd-estado"></p>
+    </section>
+
     <!-- ============================================================ ESTIMAR -->
     <section class="estimar" id="estimar" aria-labelledby="t-estimar">
       <div class="estimar__intro">
@@ -144,7 +155,7 @@
           <p class="como-leer">Los más cercanos en área, estrato, localidad y habitaciones. Son los círculos de la cinta.</p>
           <div class="desliza" tabindex="0" role="region" aria-label="Tabla de avisos parecidos">
             <table class="tabla tabla--compacta">
-              <thead><tr><th>Precio</th><th>Por m²</th><th>Área</th><th>Estrato</th><th>Localidad</th><th><span class="sr">Enlace</span></th></tr></thead>
+              <thead><tr><th>Precio</th><th>Por m²</th><th>Área</th><th>Estrato</th><th>Localidad</th><th>Fuente</th><th><span class="sr">Enlace</span></th></tr></thead>
               <tbody id="r-similares"></tbody>
             </table>
           </div>
@@ -272,7 +283,7 @@
       </div>
       <div class="tabla-marco" tabindex="0" role="region" aria-label="Tabla de avisos">
         <table class="tabla">
-          <thead><tr><th>Precio</th><th>Frente a lo esperado</th><th>Por m²</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th><span class="sr">Enlace</span></th></tr></thead>
+          <thead><tr><th>Precio</th><th>Frente a lo esperado</th><th>Por m²</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th>Fuente y verificación</th><th><span class="sr">Enlace</span></th></tr></thead>
           <tbody id="a-filas"></tbody>
         </table>
       </div>
@@ -287,7 +298,7 @@
     <section class="seccion" id="actualizacion" aria-labelledby="t-actualizacion">
       <header class="seccion__cabeza">
         <h2 class="seccion__titulo" id="t-actualizacion">Actualización de los datos</h2>
-        <p class="seccion__entrada">La aplicación recolecta, revisa y limpia los avisos sola: al abrirse y luego cada pocas horas. Cada aviso guardado se vuelve a revisar una vez por semana para detectar cambios de precio y retiros.</p>
+        <p class="seccion__entrada">La aplicación recolecta, revisa y limpia los avisos sola: al abrirse y luego cada pocas horas. Cada aviso guardado se vuelve a verificar con la fuente cada pocos días (y sin abrirlo, cuando aparece en el listado con el mismo precio) para detectar cambios de precio y retiros.</p>
       </header>
       <div class="actualizacion">
         <div class="tarjeta estado-ciclo" id="ac-estado" aria-live="polite">

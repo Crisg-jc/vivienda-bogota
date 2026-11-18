@@ -125,6 +125,27 @@ def coordenada(texto: str | None, minimo: float, maximo: float) -> float | None:
     return round(v, 6) if minimo <= v <= maximo else None
 
 
+def fecha(texto: str | None) -> dt.date | None:
+    """Fecha de publicación del portal: ISO ('2026-10-04T13:20:00Z'), dd/mm/aaaa o época en ms/s."""
+    if texto in (None, ""):
+        return None
+    t = str(texto).strip()
+    if re.fullmatch(r"\d{10}(\d{3})?", t):
+        n = int(t) / (1000 if len(t) == 13 else 1)
+        d = dt.datetime.fromtimestamp(n, dt.timezone.utc).date()
+    else:
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2})", t) or None
+        if m:
+            d = dt.date(int(m[1]), int(m[2]), int(m[3]))
+        else:
+            m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", t)
+            if not m:
+                return None
+            d = dt.date(int(m[3]), int(m[2]), int(m[1]))
+    # Fuera de un rango razonable es un dato mal leído: mejor vacío que falso.
+    return d if dt.date(2000, 1, 1) <= d <= dt.date.today() + dt.timedelta(days=1) else None
+
+
 def estado(texto: str | None) -> str | None:
     t = simple(texto)
     if not t:

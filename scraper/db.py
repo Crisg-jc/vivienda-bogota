@@ -70,7 +70,11 @@ inmuebles_crudos = Table(
     Column("estado_txt", String(40)),
     Column("latitud_txt", String(40)),
     Column("longitud_txt", String(40)),
-    Column("actualizado_en", DateTime),       # última vez que se confirmó o cambió
+    Column("publicado_txt", String(60)),      # fecha de publicación según el portal, si la informa
+    # Trazabilidad de cada aviso:
+    Column("primera_vez", DateTime),          # cuándo lo encontró el recolector por primera vez
+    Column("verificado_en", DateTime),        # última vez que se confirmó contra la fuente (listado o aviso)
+    Column("actualizado_en", DateTime),       # última vez que cambió algún dato (o se creó)
     Column("disponible", Boolean, default=True),
     Column("retirado_en", DateTime),
 )
@@ -95,6 +99,7 @@ inmuebles_limpios = Table(
     Column("latitud", Numeric(9, 6)),
     Column("longitud", Numeric(9, 6)),
     Column("fecha_consulta", Date, nullable=False),
+    Column("publicado", Date),
     Column("url_origen", String(500), nullable=False),
     Column("version_dataset", Integer, ForeignKey("dataset_versiones.version"), nullable=False),
     # Un aviso crudo aparece una sola vez por versión del dataset.
@@ -139,6 +144,7 @@ ejecuciones = Table(
     Column("revisados", Integer, default=0),
     Column("con_cambios", Integer, default=0),
     Column("retirados", Integer, default=0),
+    Column("verificados_listado", Integer, default=0),   # confirmados desde el listado sin abrir el aviso
     Column("version_dataset", Integer),
     Column("mensaje", Text),
 )

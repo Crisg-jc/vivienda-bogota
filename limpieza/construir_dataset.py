@@ -45,7 +45,7 @@ REGLAS = {
 COLUMNAS = ["precio", "area_m2", "habitaciones", "banos", "estrato", "parqueaderos",
             "localidad", "barrio", "antiguedad", "administracion",
             "piso", "estado", "latitud", "longitud",
-            "portal", "fecha_consulta", "url_origen", "crudo_id"]
+            "portal", "fecha_consulta", "publicado", "url_origen", "crudo_id"]
 
 
 def admin_valida(admin: int | None, precio: int) -> int | None:
@@ -117,6 +117,7 @@ def normalizar_crudos(crudos: pd.DataFrame) -> tuple[pd.DataFrame, Counter]:
             "latitud": lat,
             "longitud": lon,
             "portal": r.portal, "fecha_consulta": r.fecha_consulta,
+            "publicado": nz.fecha(getattr(r, "publicado_txt", None)),
             "url_origen": r.url_origen, "crudo_id": r.id,
         })
     return pd.DataFrame(filas, columns=COLUMNAS), descartes

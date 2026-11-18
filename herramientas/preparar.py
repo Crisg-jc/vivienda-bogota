@@ -66,6 +66,35 @@ def datos_anteriores():
     log.info("No hay base de datos todavía; buscada también en: %s", ", ".join(str(c) for c in candidatos))
 
 
+def actualizar_config():
+    """config/portales.yaml de una versión anterior: se actualizan solo los valores de verificación
+    que siguen en su valor viejo por defecto (los que alguien cambió a propósito se respetan).
+    Los portales, el correo y la autorización de términos no se tocan. Queda copia del original."""
+    import re
+    ruta = RAIZ / "config" / "portales.yaml"
+    if not ruta.exists():
+        return
+    texto = ruta.read_text(encoding="utf-8")
+    if re.search(r"^version_config:\s*2", texto, re.M):
+        log.info("config/portales.yaml al día")
+        return
+    copia = ruta.with_name("portales.antes-de-v2.yaml")
+    copia.write_text(texto, encoding="utf-8")
+    cambios = []
+    for clave, viejo, nuevo in (("intervalo_horas", "12", "2"), ("dias_entre_revisiones", "7", "3"),
+                                ("revisiones_por_ciclo", "300", "400")):
+        patron = re.compile(rf"^(\s+{clave}:\s*){viejo}\b", re.M)
+        if patron.search(texto):
+            texto = patron.sub(rf"\g<1>{nuevo}", texto)
+            cambios.append(f"{clave} {viejo} -> {nuevo}")
+    if "dias_vigencia" not in texto:
+        texto = re.sub(r"^(\s+)(dias_entre_revisiones:[^\n]*\n)", r"\1\2\1dias_vigencia: 7\n", texto, count=1, flags=re.M)
+        cambios.append("dias_vigencia: 7 (nuevo)")
+    texto = "version_config: 2   # la usa herramientas/preparar.py para actualizar configuraciones viejas\n" + texto
+    ruta.write_text(texto, encoding="utf-8")
+    log.info("config/portales.yaml actualizado (copia del anterior en %s): %s", copia.name, "; ".join(cambios) or "sin cambios de valores")
+
+
 def main():
     log.info("==== Preparando %s con Python %s ====", RAIZ, sys.version.split()[0])
     if sys.version_info < (3, 11):
@@ -73,6 +102,10 @@ def main():
         return 1
     if not librerias():
         return 1
+    try:
+        actualizar_config()
+    except Exception:
+        log.exception("No se pudo actualizar config/portales.yaml (se sigue con el actual)")
     try:
         datos_anteriores()
     except Exception:

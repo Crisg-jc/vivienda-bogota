@@ -33,7 +33,7 @@ from sqlalchemy import func, insert, or_, select, update
 from limpieza import normalizar as nz
 
 from . import db
-from .extraer import CAMPOS, enlaces_detalle, extraer
+from .extraer import CAMPOS, enlaces_detalle, extraer, tarjetas_listado
 from .http import AvisoRetirado, BloqueoDelPortal, Cliente
 from .recolectar import RAIZ, cargar_conf
 
@@ -47,9 +47,10 @@ SEGUIDOS = {"precio": nz.precio, "area": nz.area, "administracion": nz.precio,
             "habitaciones": nz.entero, "banos": nz.entero, "estrato": nz.entero,
             "parqueaderos": nz.entero, "antiguedad": nz.antiguedad, "estado": nz.estado}
 
-POR_DEFECTO = {"activo": True, "intervalo_horas": 12, "primer_ciclo_tras_segundos": 30,
+POR_DEFECTO = {"activo": True, "intervalo_horas": 2, "primer_ciclo_tras_segundos": 30,
                "paginas_iniciales_siempre": 5, "paginas_por_ciclo": 100, "nuevos_por_ciclo": 600,
-               "revisiones_por_ciclo": 300, "dias_entre_revisiones": 7, "max_minutos_por_ciclo": 240,
+               "revisiones_por_ciclo": 400, "dias_entre_revisiones": 3, "dias_vigencia": 7,
+               "max_minutos_por_ciclo": 240,
                "espera_tras_bloqueo_horas": 6, "max_errores_seguidos": 25, "versiones_csv_a_conservar": 10}
 
 
@@ -121,7 +122,7 @@ class Ciclo:
         self.eng = eng or db.motor()
         self.presupuesto = Presupuesto(self.aj["max_minutos_por_ciclo"])
         self.n = {"enlaces_nuevos": 0, "avisos_nuevos": 0, "revisados": 0, "con_cambios": 0,
-                  "retirados": 0, "errores": 0}
+                  "retirados": 0, "verificados_listado": 0, "errores": 0}
 
     def progreso(self, fase: str, detalle: str = ""):
         log.debug("Progreso: %s | %s | %s", fase, detalle, self.n)
@@ -166,11 +167,42 @@ class Ciclo:
                 if filas:
                     c.execute(insert(db.enlaces), filas)
             self.n["enlaces_nuevos"] += len(filas)
+            self.verificar_desde_listado(tarjetas_listado(html, p["base"], p["patron_detalle"]))
             log.info("Página %d de %s: %d avisos, %d nuevos", n, nombre, len(links), len(filas))
             log.debug("Enlaces nuevos de la página %d: %s", n, [f["url"] for f in filas])
         log.info("Listado de %s terminado: %d enlaces nuevos; el próximo ciclo sigue en la página %d",
                  nombre, self.n["enlaces_nuevos"], siguiente)
         escribir_estado(cursor={**(leer_estado().get("cursor") or {}), nombre: siguiente})
+
+    def verificar_desde_listado(self, tarjetas: dict[str, str]):
+        """Avisos ya guardados que aparecen en el listado: si el precio es el mismo, quedan
+        verificados sin abrirlos (una visita menos al portal por aviso). Si el precio cambió, se
+        ponen primeros en la cola de revisión, que abre el aviso y actualiza todos sus datos."""
+        if not tarjetas:
+            return
+        t, e = db.inmuebles_crudos.c, db.enlaces.c
+        iguales, distintos = [], []
+        with self.eng.begin() as c:
+            guardados = c.execute(select(t.url_origen, t.precio_txt, t.disponible)
+                                  .where(t.url_origen.in_(list(tarjetas)))).all()
+            for url, precio_txt, disponible in guardados:
+                antes, ahora_ = nz.precio(precio_txt), nz.precio(tarjetas[url])
+                if ahora_ is not None and antes == ahora_ and disponible is not False:
+                    iguales.append(url)
+                else:
+                    distintos.append(url)
+                    log.info("Precio distinto en el listado (%s -> %s): se revisa el aviso %s", precio_txt,
+                             tarjetas[url], url)
+            momento = ahora()
+            if iguales:
+                c.execute(update(db.inmuebles_crudos).where(t.url_origen.in_(iguales)).values(verificado_en=momento))
+                c.execute(update(db.enlaces).where(e.url.in_(iguales)).values(ultima_visita=momento,
+                                                                               ultimo_estado="ok-listado"))
+            if distintos:     # sin última visita = primeros en por_revisar
+                c.execute(update(db.enlaces).where(e.url.in_(distintos)).values(ultima_visita=None))
+        self.n["verificados_listado"] += len(iguales)
+        log.debug("Desde el listado: %d verificados sin cambios, %d con precio distinto, %d nuevos o sin guardar",
+                  len(iguales), len(distintos), len(tarjetas) - len(guardados))
 
     # ---- fases 2 y 3
     def pendientes(self, nombre: str, limite: int) -> list[str]:
@@ -252,11 +284,12 @@ class Ciclo:
         t = db.inmuebles_crudos
         with self.eng.begin() as c:
             previo = c.execute(select(t).where(t.c.url_origen == url)).mappings().first()
+            momento = ahora()
             base = {"portal": nombre, "url_origen": url, "fecha_consulta": dt.date.today(),
-                    "metodo_extraccion": metodo, "actualizado_en": ahora(),
+                    "metodo_extraccion": metodo, "verificado_en": momento,
                     "disponible": True, "retirado_en": None}
             if previo is None:
-                c.execute(insert(t), {**nuevo, **base})
+                c.execute(insert(t), {**nuevo, **base, "primera_vez": momento, "actualizado_en": momento})
                 self.n["avisos_nuevos"] += 1
                 log.debug("Aviso nuevo guardado: %s precio=%s área=%s", url, nuevo.get("precio_txt"), nuevo.get("area_txt"))
                 return
@@ -271,6 +304,10 @@ class Ciclo:
                                 "antes": "no", "despues": "sí"})
             # Un campo que esta vez no se pudo leer conserva el valor anterior
             fusion = {k: (v if v is not None else previo[k]) for k, v in nuevo.items()}
+            if cambios:
+                base["actualizado_en"] = momento        # solo cambia cuando algo cambió de verdad
+            if previo.get("primera_vez") is None:
+                base["primera_vez"] = previo.get("actualizado_en") or momento
             c.execute(update(t).where(t.c.id == previo["id"]).values(**fusion, **base))
             if cambios:
                 c.execute(insert(db.cambios), cambios)
@@ -285,7 +322,8 @@ class Ciclo:
         with self.eng.begin() as c:
             previo = c.execute(select(t.c.id, t.c.disponible).where(t.c.url_origen == url)).first()
             if previo and previo.disponible is not False:
-                c.execute(update(t).where(t.c.id == previo.id).values(disponible=False, retirado_en=ahora()))
+                c.execute(update(t).where(t.c.id == previo.id).values(disponible=False, retirado_en=ahora(),
+                                                                      verificado_en=ahora(), actualizado_en=ahora()))
                 c.execute(insert(db.cambios), [{"url_origen": url, "fecha": ahora(), "campo": "disponible",
                                                 "antes": "sí", "despues": "no"}])
                 self.n["retirados"] += 1

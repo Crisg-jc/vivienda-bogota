@@ -9,6 +9,7 @@ Al arrancar:
   - inicia el ciclo automático de recolección (app/automatizacion.py), que recolecta, revisa cambios,
     versiona el dataset y reentrena; cuando publica un corte nuevo, la app lo carga sin reiniciarse.
 """
+import datetime as dt
 import json
 import logging
 import math
@@ -27,6 +28,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from comun import registro
@@ -34,6 +36,7 @@ from comun.registro import cronometro
 from limpieza.normalizar import LOCALIDADES
 from modelo import datos as D
 from modelo import demo, entrenar, estimar
+from scraper import db
 
 from .automatizacion import Orquestador
 
@@ -49,23 +52,19 @@ UMBRAL = 0.10        # ±10 % frente al precio esperado = "en línea con su zona
 def asegurar_dataset_real() -> None:
     """Si la base ya tiene avisos recolectados pero en datos/ no hay ningún dataset_vN.csv (base
     copiada de otra carpeta, o un ciclo que no alcanzó a publicar), se construye ahora mismo a
-    partir de la base, sin visitar ningún portal. Así la app nunca muestra la demostración
-    teniendo datos reales."""
+    partir de la base, sin visitar ningún portal."""
     ruta, tipo = D.ubicar()
     if tipo == "real" or os.environ.get("VIVIENDA_DATASET"):
         return
     try:
-        from sqlalchemy import func, select
-
-        from scraper import db
-        eng = db.motor()
+        eng = motor_bd()
         with eng.begin() as c:
             n = c.scalar(select(func.count()).select_from(db.inmuebles_crudos)) or 0
     except Exception:
         log.exception("No se pudo revisar la base de datos para construir el dataset real")
         return
     if n == 0:
-        log.info("La base no tiene avisos recolectados todavía: se usará la demostración")
+        log.debug("La base no tiene avisos recolectados todavía: se espera al primer ciclo de recolección")
         return
     log.warning("La base tiene %d avisos recolectados pero no hay dataset_vN.csv en datos/: se construye ahora", n)
     from limpieza import construir_dataset as cd
@@ -76,7 +75,24 @@ def asegurar_dataset_real() -> None:
     except SystemExit as e:
         log.warning("No se pudo construir el dataset real: %s", e)
     except Exception:
-        log.exception("Falló la construcción del dataset real; se sigue con la demostración")
+        log.exception("Falló la construcción del dataset real")
+
+
+_MOTOR = {}
+
+
+def motor_bd():
+    if "eng" not in _MOTOR:
+        _MOTOR["eng"] = db.motor()
+    return _MOTOR["eng"]
+
+
+def sin_datos(motivo: str, ruta=None) -> None:
+    """Estado sin datos reales suficientes. La app NO inventa resultados: la interfaz muestra
+    el avance de la recolección y las estimaciones esperan a que haya avisos reales."""
+    log.warning("Sin datos reales suficientes: %s", motivo)
+    ESTADO.clear()
+    ESTADO.update({"tipo": "ninguno", "motivo": motivo, "ruta": ruta, "huella": None, "arranque": time.time()})
 
 
 def preparar_estado() -> None:
@@ -87,12 +103,15 @@ def preparar_estado() -> None:
     asegurar_dataset_real()
     ruta, tipo = D.ubicar()
     log.info("Dataset elegido: %s (tipo %s)", ruta, tipo)
-    if ruta is None:
-        log.warning("No hay dataset en datos/. Se crean datos SINTÉTICOS de demostración.")
+    if ruta is None and os.environ.get("VIVIENDA_DEMO") == "1":
+        log.warning("VIVIENDA_DEMO=1: se crean datos SINTÉTICOS de demostración (solo para pruebas)")
         with cronometro(log, "Crear datos de demostración"):
             demo.main([])
         ruta, tipo = D.ubicar()
-        log.info("Dataset de demostración: %s", ruta)
+    if ruta is None:
+        sin_datos("Todavía no se ha recolectado ningún aviso real. La recolección automática está en marcha.")
+        actualizar_traza()
+        return
     with cronometro(log, "Calcular huella del dataset", logging.DEBUG):
         huella = D.huella(ruta)
     log.debug("Huella sha256 del dataset: %s", huella)
@@ -113,17 +132,11 @@ def preparar_estado() -> None:
             with cronometro(log, f"Entrenar el modelo con {ruta.name}"):
                 entrenar.entrenar(ruta, tipo)
         except SystemExit as e:
-            # Muy pocos avisos reales todavía: se usa la demostración hasta que haya suficientes.
-            if tipo == "demo":
-                raise
-            log.warning("No se puede entrenar con %s (%s). Mientras tanto se usa la demostración.", ruta.name, e)
-            ESTADO["ruta_descartada"] = ruta      # el orquestador no vuelve a intentarlo cada 20 s
-            if not D.DEMO.exists():
-                demo.main([])
-            ruta, tipo, huella = D.DEMO, "demo", D.huella(D.DEMO)
-            art = estimar.cargar_modelo()
-            if art is None or art.get("sha256") != huella or art.get("version") != entrenar.VERSION_MODELO:
-                entrenar.entrenar(ruta, tipo)
+            sin_datos(f"Hay muy pocos avisos reales para estimar con confianza ({e}). "
+                      "La recolección automática sigue sumando avisos.", ruta)
+            ESTADO["huella"] = huella
+            actualizar_traza()
+            return
         art = estimar.cargar_modelo()
     with cronometro(log, "Cargar dataset en memoria", logging.DEBUG):
         df = D.cargar(ruta)
@@ -142,33 +155,106 @@ def preparar_estado() -> None:
         nuevo["mercado"] = calcular_mercado(df)
     with cronometro(log, "Calcular estadísticas por zona", logging.DEBUG):
         nuevo["zonas"] = calcular_zonas(df, art)
-    sin_datos = [z["nombre"] for z in nuevo["zonas"]["localidades"] if not z["n"]]
-    if sin_datos:
-        log.info("Localidades sin avisos en este dataset: %s", ", ".join(sin_datos))
+    sin_loc = [z["nombre"] for z in nuevo["zonas"]["localidades"] if not z["n"]]
+    if sin_loc:
+        log.info("Localidades sin avisos en este dataset: %s", ", ".join(sin_loc))
+    for k in ("motivo",):
+        ESTADO.pop(k, None)
     ESTADO.update(nuevo)
     ESTADO.setdefault("arranque", time.time())
+    actualizar_traza()
     log.info("Listo en %.1fs: %s (%s), %d avisos, modelo %s", time.perf_counter() - t0, ruta.name, tipo,
              len(df), art["nombre"])
 
 
-def recargar_si_cambio() -> None:
-    """La llama el orquestador: si el ciclo publicó un dataset nuevo, la app lo adopta."""
-    ruta, _ = D.ubicar()
-    if ruta is None or "ruta" not in ESTADO:
-        log.debug("Revisión de dataset: nada que comparar todavía (ruta=%s)", ruta)
+# ---------------------------------------------------------------- trazabilidad en vivo
+# El dataset es un corte para el modelo; la verificación contra la fuente cambia a cada rato.
+# Por eso las fechas de cada aviso (primera vez visto, última verificación, último cambio,
+# disponibilidad) se leen de la base en vivo y se refrescan cada 20 s mientras la app está abierta.
+TRAZA: dict = {"por_url": {}, "leida": None, "resumen": {}}
+
+
+def _iso(v):
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return None
+    if isinstance(v, str):
+        return v
+    return v.astimezone().isoformat(timespec="seconds") if hasattr(v, "astimezone") else str(v)
+
+
+def actualizar_traza() -> None:
+    try:
+        eng = motor_bd()
+        t = db.inmuebles_crudos.c
+        with eng.begin() as c:
+            filas = c.execute(select(t.url_origen, t.portal, t.publicado_txt, t.primera_vez, t.verificado_en,
+                                     t.actualizado_en, t.fecha_consulta, t.disponible, t.retirado_en)).all()
+    except Exception:
+        log.exception("No se pudo leer la trazabilidad de los avisos desde la base")
         return
-    if ruta != ESTADO["ruta"] or D.huella(ruta) != ESTADO["huella"]:
-        if ruta == ESTADO.get("ruta_descartada"):
-            return
-        log.info("Dataset nuevo (%s, antes %s): recargando datos y modelo", ruta.name, ESTADO["ruta"].name)
-        try:
-            preparar_estado()
-        except (Exception, SystemExit):
-            # Un SystemExit en este hilo lo mataría en silencio: se registra y se siguen usando los datos anteriores.
-            log.exception("No se pudo cargar el dataset nuevo %s; se siguen usando los datos anteriores", ruta.name)
-            ESTADO["ruta_descartada"] = ruta
-    else:
+    from limpieza.normalizar import fecha as fecha_txt
+    ahora = dt.datetime.now()
+    vigencia = dt.timedelta(days=dias_vigencia())
+    por_url, vigentes, viejos, retirados, ultima = {}, 0, 0, 0, None
+    for f in filas:
+        # Registros de versiones anteriores sin verificado_en: la última visita conocida es fecha_consulta.
+        verificado = f.verificado_en or f.actualizado_en or (
+            dt.datetime.combine(f.fecha_consulta, dt.time()) if f.fecha_consulta else None)
+        disponible = f.disponible is not False
+        vigente = bool(disponible and verificado and ahora - verificado <= vigencia)
+        if not disponible:
+            retirados += 1
+        elif vigente:
+            vigentes += 1
+        else:
+            viejos += 1
+        if verificado and (ultima is None or verificado > ultima):
+            ultima = verificado
+        publicado = fecha_txt(f.publicado_txt)
+        por_url[f.url_origen] = {
+            "portal": f.portal, "publicado": publicado.isoformat() if publicado else None,
+            "primera_vez": _iso(f.primera_vez), "verificado_en": _iso(verificado),
+            "actualizado_en": _iso(f.actualizado_en), "disponible": disponible,
+            "retirado_en": _iso(f.retirado_en), "vigente": vigente}
+    TRAZA.update(por_url=por_url, leida=ahora, resumen={
+        "registros": len(filas), "vigentes": vigentes, "sin_verificar_reciente": viejos, "retirados": retirados,
+        "ultima_verificacion": _iso(ultima), "dias_vigencia": dias_vigencia()})
+    log.debug("Trazabilidad actualizada: %s", TRAZA["resumen"])
+
+
+def dias_vigencia() -> int:
+    try:
+        from scraper import ciclo as cy
+        from scraper.recolectar import cargar_conf
+        return int(cy.ajustes(cargar_conf())["dias_vigencia"])
+    except Exception:
+        return 7
+
+
+def recargar_si_cambio() -> None:
+    """La llama el orquestador cada 20 s: refresca la trazabilidad y, si el ciclo publicó un
+    dataset nuevo, la app lo adopta sin reiniciarse."""
+    actualizar_traza()
+    if "tipo" not in ESTADO:
+        return
+    if ESTADO["tipo"] == "ninguno":
+        asegurar_dataset_real()
+    ruta, _ = D.ubicar()
+    if ruta is None:
+        log.debug("Revisión de dataset: todavía no hay dataset real")
+        return
+    huella = D.huella(ruta)
+    if ruta == ESTADO.get("ruta") and huella == ESTADO.get("huella"):
         log.debug("Revisión de dataset: sin cambios (%s)", ruta.name)
+        return
+    log.info("Dataset nuevo (%s, antes %s): recargando datos y modelo", ruta.name,
+             ESTADO["ruta"].name if ESTADO.get("ruta") else "ninguno")
+    try:
+        preparar_estado()
+    except (Exception, SystemExit):
+        # Un SystemExit en este hilo lo mataría en silencio: se registra y se siguen usando los datos anteriores.
+        log.exception("No se pudo cargar el dataset nuevo %s; se siguen usando los datos anteriores", ruta.name)
+        ESTADO["ruta"], ESTADO["huella"] = ruta, huella      # no reintentar el mismo archivo cada 20 s
 
 
 ORQUESTADOR = Orquestador(recargar_si_cambio)
@@ -284,12 +370,33 @@ def aviso(r) -> dict:
                                        "parqueaderos", "antiguedad", "localidad", "barrio", "precio_esperado",
                                        "diferencia_pct", "comparacion", "precio_anterior", "latitud", "longitud"]}
     d["url_origen"] = url_segura(r.get("url_origen"))
+    # Trazabilidad en vivo: fuente, publicación, primera vez visto, última verificación y último cambio.
+    t = TRAZA["por_url"].get(r.get("url_origen"))
+    d["fuente"] = t or {"portal": limpio(r.get("portal")), "publicado": None, "primera_vez": None,
+                        "verificado_en": None, "actualizado_en": None, "disponible": None, "vigente": False}
     return d
+
+
+def listo() -> None:
+    """Las consultas que necesitan datos reales responden 503 con el motivo mientras no los hay:
+    nunca se contesta con datos inventados."""
+    if ESTADO.get("tipo") == "ninguno":
+        raise HTTPException(503, ESTADO.get("motivo") or "Todavía no hay datos reales suficientes.")
+
+
+def info_dataset() -> dict:
+    if ESTADO.get("tipo") == "ninguno":
+        return {"archivo": ESTADO["ruta"].name if ESTADO.get("ruta") else None, "tipo": "ninguno", "avisos": 0,
+                "motivo": ESTADO.get("motivo")}
+    return {"archivo": ESTADO["ruta"].name, "tipo": ESTADO["tipo"], "avisos": len(ESTADO["df"])}
 
 
 @app.get("/api/salud", include_in_schema=False)
 def api_salud():
-    """Para Docker, el balanceador o el monitoreo: 200 cuando el dataset y el modelo están cargados."""
+    """Para Docker, el balanceador o el monitoreo: 200 cuando la app terminó de arrancar."""
+    if ESTADO.get("tipo") == "ninguno":
+        return {"estado": "sin_datos", "motivo": ESTADO.get("motivo"),
+                "segundos_activo": round(time.time() - ESTADO["arranque"])}
     if "art" not in ESTADO:
         raise HTTPException(503, "Cargando")
     return {"estado": "ok", "avisos": len(ESTADO["df"]), "modelo": ESTADO["art"]["nombre"],
@@ -300,9 +407,14 @@ def api_salud():
 
 @app.get("/api/estado")
 def api_estado():
+    verificacion = TRAZA["resumen"]
+    if ESTADO.get("tipo") == "ninguno":
+        return {"dataset": info_dataset(), "modelo": None, "localidades": LOCALIDADES, "referencia": None,
+                "verificacion": verificacion}
     m = ESTADO["metricas"]
     return {
-        "dataset": {"archivo": ESTADO["ruta"].name, "tipo": ESTADO["tipo"], "avisos": len(ESTADO["df"])},
+        "verificacion": verificacion,
+        "dataset": info_dataset(),
         "modelo": {"nombre": m["modelo_elegido"], "supera_linea_base": m["supera_linea_base"],
                    "entrenado": m["fecha"], "nivel_rango": m["rango"]["nivel"]},
         "localidades": LOCALIDADES,
@@ -333,6 +445,7 @@ class Entrada(BaseModel):
 
 @app.post("/api/estimar")
 def api_estimar(e: Entrada):
+    listo()
     datos = e.model_dump()
     t = time.perf_counter()
     log_api.debug("Estimar con: %s", datos)
@@ -378,6 +491,7 @@ def caja(s: pd.Series) -> dict:
 
 @app.get("/api/mercado")
 def api_mercado():
+    listo()
     return ESTADO["mercado"]
 
 
@@ -454,11 +568,13 @@ def calcular_zonas(df: pd.DataFrame, art: dict) -> dict:
 
 @app.get("/api/zonas")
 def api_zonas():
+    listo()
     return ESTADO["zonas"]
 
 
 @app.get("/api/zonas/{nombre}")
 def api_zona(nombre: str):
+    listo()
     z = next((z for z in ESTADO["zonas"]["localidades"] if z["nombre"] == nombre), None)
     if z is None:
         log_api.warning("Zona pedida que no existe: %r", nombre)
@@ -490,8 +606,15 @@ def api_avisos(localidad: str | None = None, estrato: int | None = Query(None, g
                comparacion: Literal["debajo", "en_linea", "encima"] | None = None,
                orden: Literal["precio", "-precio", "precio_m2", "-precio_m2", "area_m2", "-area_m2",
                               "diferencia_pct", "-diferencia_pct"] = "precio",
-               pagina: int = Query(1, ge=1), por_pagina: int = Query(25, ge=5, le=100)):
+               pagina: int = Query(1, ge=1), por_pagina: int = Query(25, ge=5, le=100),
+               incluir_retirados: bool = False):
+    listo()
     df = ESTADO["df"]
+    if not incluir_retirados and TRAZA["por_url"]:
+        # Un aviso que el portal ya retiró no se muestra como vigente, aunque siga en el corte del modelo.
+        retirados = {u for u, t in TRAZA["por_url"].items() if not t["disponible"]}
+        if retirados:
+            df = df[~df["url_origen"].isin(retirados)]
     if localidad:
         df = df[df["localidad"] == localidad]
     if barrio:
@@ -528,8 +651,8 @@ def es_local(request: Request) -> bool:
 
 @app.get("/api/automatizacion")
 def api_automatizacion(request: Request):
-    return {**ORQUESTADOR.estado(), "puede_ejecutar": es_local(request),
-            "dataset": {"archivo": ESTADO["ruta"].name, "tipo": ESTADO["tipo"], "avisos": len(ESTADO["df"])}}
+    return {**ORQUESTADOR.estado(), "puede_ejecutar": es_local(request), "dataset": info_dataset(),
+            "verificacion": TRAZA["resumen"]}
 
 
 @app.post("/api/automatizacion/ejecutar")
@@ -609,6 +732,7 @@ def api_diagnostico(request: Request, texto: bool = False):
 
 @app.get("/api/modelo")
 def api_modelo():
+    listo()
     return ESTADO["metricas"]
 
 

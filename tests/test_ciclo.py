@@ -169,3 +169,55 @@ def test_sin_internet_se_informa_sin_tumbar_nada(entorno, monkeypatch):
             raise requests.exceptions.ConnectionError("sin red")
     r = cy.ejecutar(conf, cliente_cls=SinRed, entrenar_modelo=False)
     assert r["resultado"] == "sin_conexion"
+
+
+def listado_json(tarjetas):
+    """Página de listado con los datos de cada tarjeta en __NEXT_DATA__ (enlace y precio)."""
+    datos = {"props": {"pageProps": {"results": [
+        {"link": f"/apartamento-en-venta-en-{b}-bogota/{k}", "price": {"amount": p}} for (b, k), p in tarjetas.items()]}}}
+    enlaces_html = "".join(enlace(b, k) for b, k in tarjetas)
+    return f'<script id="__NEXT_DATA__">{json.dumps(datos)}</script>{enlaces_html}'
+
+
+def test_fechas_de_trazabilidad(entorno):
+    conf, _ = entorno
+    Portal.avisos["111"] = Portal.avisos["111"].replace('"garage": 1', '"garage": 1, "created_at": "2026-10-02T10:00:00Z"')
+    correr(conf)
+    url = select(db.inmuebles_crudos).where(db.inmuebles_crudos.c.url_origen.like("%/111"))
+    with db.motor().begin() as c:
+        a = c.execute(url).mappings().one()
+    assert a["primera_vez"] and a["verificado_en"] and a["actualizado_en"]
+    assert a["publicado_txt"] == "2026-10-02T10:00:00Z"
+    with db.motor().begin() as c:     # se simula que la última visita fue hace días
+        c.execute(db.inmuebles_crudos.update().values(verificado_en=a["verificado_en"].replace(year=2025),
+                                                      actualizado_en=a["actualizado_en"].replace(year=2025)))
+    correr(conf)                      # se vuelve a visitar sin cambios
+    with db.motor().begin() as c:
+        b = c.execute(url).mappings().one()
+    assert b["verificado_en"].year == 2026, "una visita sin cambios confirma la vigencia"
+    assert b["actualizado_en"].year == 2025, "sin cambios, la fecha de actualización no se mueve"
+    assert b["primera_vez"] == a["primera_vez"]
+
+
+def test_listado_verifica_sin_abrir_y_detecta_precio_distinto(entorno):
+    from scraper.extraer import tarjetas_listado
+    conf, _ = entorno
+    correr(conf)
+    conf["automatico"]["dias_entre_revisiones"] = 30      # nada vencido: solo el listado verifica
+    html = listado_json({("niza", "111"): 410_000_000, ("cedritos", "222"): 499_000_000,
+                         ("chico", "333"): 900_000_000})
+    t = tarjetas_listado(html, BASE, conf["portales"]["fincaraiz"]["patron_detalle"])
+    assert len(t) == 3
+    Portal.listado = {2: html}
+    Portal.avisos["222"] = detalle(499_000_000, 85, "Usaquén")
+    visitas = []
+
+    class Contador(ClienteFalso):
+        def obtener(self, url, base):
+            if "/apartamento-en-venta-en-" in url:
+                visitas.append(url.rsplit("/", 1)[1])
+            return super().obtener(url, base)
+    r = cy.ejecutar(conf, cliente_cls=Contador, entrenar_modelo=False)
+    assert r["verificados_listado"] == 2
+    assert visitas == ["222"], "solo se abre el aviso cuyo precio cambió en el listado"
+    assert r["con_cambios"] == 1

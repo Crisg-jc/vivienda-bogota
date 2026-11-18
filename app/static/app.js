@@ -112,14 +112,60 @@ function conTip(nodo, html) {
 // ---------------------------------------------------------------- estado general
 let ESTADO = null;
 
-const textoDataset = (d) => (d.tipo === "demo"
-  ? `${fmt.format(d.avisos)} avisos de demostración`
-  : `${fmt.format(d.avisos)} avisos reales, archivo ${d.archivo}`);
+const textoDataset = (d, v) => {
+  if (d.tipo === "ninguno") return "Sin datos reales todavía";
+  if (d.tipo === "demo") return `${fmt.format(d.avisos)} avisos de demostración`;
+  const cuando = v && v.ultima_verificacion ? `, verificados ${haceCuanto(v.ultima_verificacion)}` : "";
+  return `${fmt.format(d.avisos)} avisos reales${cuando}`;
+};
+
+// ---------------------------------------------------------------- trazabilidad de cada aviso
+const NOMBRE_PORTAL = { fincaraiz: "Finca Raíz", ciencuadras: "Ciencuadras", metrocuadrado: "Metrocuadrado" };
+const fechaLarga = (iso) => new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+const diaLargo = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" });
+
+function haceCuanto(iso) {
+  if (!iso) return "sin fecha";
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 2) return "hace un momento";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "hace 1 día" : `hace ${d} días`;
+}
+
+// "Finca Raíz · verificado hace 2 h", con el detalle completo al pasar el puntero.
+function celdaFuente(a, corta = false) {
+  const f = a.fuente || {};
+  const portal = esc(NOMBRE_PORTAL[f.portal] || f.portal || "Fuente desconocida");
+  let estado, clase = "";
+  if (f.disponible === false) { estado = "retirado del portal"; clase = " fuente--retirado"; }
+  else if (!f.verificado_en) { estado = "sin verificar"; clase = " fuente--vieja"; }
+  else if (!f.vigente) { estado = `sin verificar desde ${diaLargo(f.verificado_en.slice(0, 10))}`; clase = " fuente--vieja"; }
+  else estado = `verificado ${haceCuanto(f.verificado_en)}`;
+  const detalle = [
+    `Publicado: ${f.publicado ? diaLargo(f.publicado) : "el portal no informa la fecha"}`,
+    `Visto por primera vez: ${f.primera_vez ? fechaLarga(f.primera_vez) : "—"}`,
+    `Última verificación con la fuente: ${f.verificado_en ? fechaLarga(f.verificado_en) : "—"}`,
+    `Último cambio de datos: ${f.actualizado_en ? fechaLarga(f.actualizado_en) : "—"}`,
+  ].join("\n");
+  return `<span class="fuente${clase}" title="${esc(detalle)}">${corta ? "" : portal}<small>${esc(estado)}</small>${
+    corta || !f.publicado ? "" : `<small>publicado ${esc(diaLargo(f.publicado))}</small>`}</span>`;
+}
 
 function pintarDataset() {
   const d = ESTADO.dataset;
-  $("#insignia-texto").textContent = textoDataset(d);
+  $("#insignia-texto").textContent = textoDataset(d, ESTADO.verificacion);
   $("#aviso-demo").hidden = d.tipo !== "demo";
+}
+
+// Sin avisos reales suficientes: no se muestra nada calculado, solo el avance de la recolección.
+function modoSinDatos() {
+  REG.warn("Sin datos reales suficientes: la página muestra solo el avance de la recolección", ESTADO.dataset);
+  document.body.classList.add("modo-sin-datos");
+  $("#sin-datos").hidden = false;
+  $("#sd-motivo").textContent = ESTADO.dataset.motivo || "La recolección automática está reuniendo los primeros avisos.";
 }
 
 function avisoEnSeccion(selector, que) {
@@ -134,8 +180,14 @@ async function iniciar() {
   REG.debug("Leaflet disponible", { leaflet: Boolean(window.L), version: window.L?.version });
   if (!window.L) REG.error("Leaflet (mapas) no cargó: los mapas no se verán. Revise /static/vendor/leaflet/leaflet.js");
   ESTADO = await api("/api/estado");
-  REG.info(`Datos: ${ESTADO.dataset.archivo} (${ESTADO.dataset.tipo}), ${ESTADO.dataset.avisos} avisos; modelo ${ESTADO.modelo.nombre}`);
   pintarDataset();
+  if (ESTADO.dataset.tipo === "ninguno") {
+    modoSinDatos();
+    cargarActualizacion();
+    t.fin();
+    return;
+  }
+  REG.info(`Datos: ${ESTADO.dataset.archivo} (${ESTADO.dataset.tipo}), ${ESTADO.dataset.avisos} avisos; modelo ${ESTADO.modelo.nombre}`, ESTADO.verificacion);
   for (const sel of [$("#localidad"), $("#f-localidad")]) {
     for (const l of ESTADO.localidades) sel.add(new Option(l, l));
   }
@@ -406,7 +458,7 @@ function chipEstrato(e) {
 function pintarSimilares(lista) {
   $("#r-similares").innerHTML = lista.map((s) => `<tr>
     <td>${corto(s.precio)}</td><td>${m2(s.precio_m2)}</td><td>${area(s.area_m2)}</td><td>${chipEstrato(s.estrato)}</td>
-    <td>${esc(s.localidad ?? "—")}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
+    <td>${esc(s.localidad ?? "—")}</td><td>${celdaFuente(s)}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
 }
 
 // ---------------------------------------------------------------- mercado
@@ -773,7 +825,7 @@ function pintarPanelZona(d) {
     ? d.debajo.map((a) => {
       const url = urlSegura(a.url_origen);
       const desc = `${corto(a.precio)}, ${area(a.area_m2)}${a.barrio ? `, ${esc(a.barrio)}` : ""}`;
-      return `<li><span>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${desc}</a>` : desc}</span>${chipComparacion(a)}</li>`;
+      return `<li><span>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${desc}</a>` : desc}${celdaFuente(a, true)}</span>${chipComparacion(a)}</li>`;
     }).join("")
     : `<li class="vacio">Ningún aviso está más de 10 % por debajo de lo esperado.</li>`;
 }
@@ -960,6 +1012,12 @@ async function cargarActualizacion() {
     situacionAnterior = a.situacion;
   }
   try { pintarActualizacion(a); } catch (e) { REG.error("Falló al mostrar el estado de la actualización", e); }
+  try { pintarAvisoFuente(a); } catch (e) { REG.error("Falló al mostrar el estado de la fuente", e); }
+  if (ESTADO?.dataset?.tipo === "ninguno" && a.dataset.tipo !== "ninguno") {
+    REG.info("Ya hay datos reales: se recarga la página para mostrarlos");
+    location.reload();
+    return;
+  }
   const firma = `${a.dataset.archivo}|${a.dataset.avisos}`;
   if (FIRMA_DATASET && firma !== FIRMA_DATASET) refrescarTodo();
   FIRMA_DATASET = firma;
@@ -1001,7 +1059,11 @@ function pintarActualizacion(a) {
 
   const insignia = $("#insignia-datos");
   insignia.classList.toggle("actualizando", a.situacion === "en_curso");
-  $("#insignia-texto").textContent = a.situacion === "en_curso" ? "Actualizando datos…" : textoDataset(a.dataset);
+  $("#insignia-texto").textContent = a.situacion === "en_curso" ? "Verificando con la fuente…" : textoDataset(a.dataset, a.verificacion);
+  if (!$("#sin-datos").hidden) {
+    $("#sd-base").innerHTML = base.slice(0, 3).map(([k, v]) => `<div><dt>${k}</dt><dd>${fmt.format(v ?? 0)}</dd></div>`).join("");
+    $("#sd-estado").textContent = `${titulo}. ${detalle}`;
+  }
 }
 
 $("#ac-ejecutar").addEventListener("click", async () => {
@@ -1021,6 +1083,28 @@ $("#ac-ejecutar").addEventListener("click", async () => {
   }
 });
 
+// Franja de aviso arriba: si no se pudo verificar con la fuente, se dice claramente y desde cuándo
+// son los datos que se están viendo. Nada desactualizado se presenta como vigente.
+function pintarAvisoFuente(a) {
+  const u = a.ultimo_ciclo, v = a.verificacion || {};
+  const desde = v.ultima_verificacion ? `Los datos que ve se verificaron con la fuente por última vez ${haceCuanto(v.ultima_verificacion)} (${fechaLarga(v.ultima_verificacion)}).` : "";
+  const viejos = v.sin_verificar_reciente ? ` ${fmt.format(v.sin_verificar_reciente)} avisos llevan más de ${v.dias_vigencia} días sin verificar y se marcan así en la lista.` : "";
+  let texto = "";
+  if (a.situacion === "pausado") {
+    texto = `El portal limitó el acceso y la verificación está en pausa hasta las ${a.pausa_hasta ? hora(a.pausa_hasta) : "—"}. ${desde}${viejos}`;
+  } else if (a.situacion !== "en_curso" && u && ["sin_conexion", "error", "bloqueado"].includes(u.resultado)) {
+    texto = `No se pudo verificar con la fuente en el último intento (${u.mensaje || RESULTADOS[u.resultado]}). ${desde}${viejos}`;
+  } else if (a.situacion === "sin_portales") {
+    texto = `La recolección no está autorizada (falta terminos_revisados: true en config/portales.yaml), así que los datos no se están verificando. ${desde}`;
+  } else if (a.situacion === "apagado") {
+    texto = `La actualización automática está apagada: los datos no se están verificando con la fuente. ${desde}`;
+  }
+  const caja = $("#aviso-fuente");
+  if (Boolean(texto) !== !caja.hidden) REG.info(texto ? `Aviso de fuente: ${texto}` : "La fuente volvió a estar verificada");
+  caja.hidden = !texto;
+  $("#aviso-fuente-texto").textContent = texto;
+}
+
 // ---------------------------------------------------------------- avisos
 let paginaActual = 1;
 async function cargarAvisos() {
@@ -1035,7 +1119,7 @@ async function cargarAvisos() {
   $("#a-filas").innerHTML = r.avisos.map((a) => `<tr>
       <td>${corto(a.precio)}${precioAnterior(a)}</td><td>${chipComparacion(a)}</td><td>${m2(a.precio_m2)}</td><td>${area(a.area_m2)}</td>
       <td>${a.habitaciones ?? "—"}</td><td>${a.banos ?? "—"}</td><td>${chipEstrato(a.estrato)}</td>
-      <td>${esc(a.localidad ?? "—")}</td><td>${esc(a.barrio ?? "—")}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
+      <td>${esc(a.localidad ?? "—")}</td><td>${esc(a.barrio ?? "—")}</td><td>${celdaFuente(a)}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
   $("#a-pagina").textContent = `Página ${r.pagina} de ${paginas}`;
   $("#a-limpiar").hidden = !["localidad", "estrato", "precio_max", "area_min", "comparacion"].some((k) => f.get(k));
   $("#a-anterior").disabled = r.pagina <= 1;

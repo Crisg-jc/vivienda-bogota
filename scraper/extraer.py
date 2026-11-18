@@ -20,7 +20,7 @@ log = logging.getLogger("vivienda.extraer")
 
 CAMPOS = ["precio", "area", "habitaciones", "banos", "estrato", "parqueaderos",
           "antiguedad", "administracion", "localidad", "barrio", "tipo",
-          "piso", "estado", "latitud", "longitud"]
+          "piso", "estado", "latitud", "longitud", "publicado"]
 
 SINONIMOS = {
     "precio": {"price", "precio", "saleprice", "sellprice", "pricevalue", "valorventa"},
@@ -38,7 +38,11 @@ SINONIMOS = {
     "localidad": {"localidad"},
     "barrio": {"barrio", "neighbourhood", "neighborhood", "sector", "commonneighborhood"},
     "tipo": {"propertytype", "tipoinmueble", "tipo"},
+    "publicado": {"dateposted", "datepublished", "publicationdate", "publishedat", "publishdate",
+                  "fechapublicacion", "activationdate", "createdat"},
 }
+CLAVES_PUBLICACION = ("publication_date", "publicationDate", "published_at", "publishedAt", "activation_date",
+                      "activationDate", "created_at", "createdAt", "datePosted")
 
 
 def _clave(s: str) -> str:
@@ -121,7 +125,8 @@ def _json_ld(soup) -> dict:
             if o.get("floorSize"):
                 res.setdefault("area", _escalar(o["floorSize"]) or str(o["floorSize"]))
             for k_ld, campo in (("numberOfBedrooms", "habitaciones"), ("numberOfRooms", "habitaciones"),
-                                ("numberOfBathroomsTotal", "banos"), ("yearBuilt", "antiguedad")):
+                                ("numberOfBathroomsTotal", "banos"), ("yearBuilt", "antiguedad"),
+                                ("datePosted", "publicado"), ("datePublished", "publicado")):
                 if o.get(k_ld) is not None:
                     res.setdefault(campo, _escalar(o[k_ld]) or str(o[k_ld]))
             tipos = o.get("@type") or []
@@ -172,6 +177,8 @@ def _fincaraiz(datos: dict) -> dict:
         "estado": ficha.get("construction_state_name"),
         "latitud": d.get("latitude"),
         "longitud": d.get("longitude"),
+        # Si el portal no informa la fecha, queda vacía: la interfaz dice "no informada", no inventa una.
+        "publicado": next((d[k] for k in CLAVES_PUBLICACION if d.get(k)), None),
     }
     return {k: str(v) for k, v in campos.items() if v not in (None, "", [], {})}
 
@@ -256,4 +263,53 @@ def enlaces_detalle(html: str, base: str, patron: str) -> list[str]:
             vistos.add(url)
             salida.append(url)
     log.debug("Listado: %d candidatos revisados, %d avisos individuales", len(candidatos), len(salida))
+    return salida
+
+
+def tarjetas_listado(html: str, base: str, patron: str) -> dict[str, str]:
+    """Precio de cada aviso tal como aparece en la página del listado: {url: precio en texto}.
+
+    Sirve para verificar avisos ya guardados sin abrir cada uno: si el precio del listado es el
+    mismo que el guardado, el aviso sigue publicado y sin cambio de precio. Busca en los datos JSON
+    de la página objetos que tengan a la vez un enlace a un aviso y un precio. Si el portal no
+    los trae, devuelve {} y el ciclo sigue como antes (abriendo cada aviso).
+    """
+    from urllib.parse import urljoin
+    soup = BeautifulSoup(html, "lxml")
+    s = soup.find("script", id="__NEXT_DATA__")
+    if not s or not s.string:
+        log.debug("Listado sin __NEXT_DATA__: no hay precios para verificar desde el listado")
+        return {}
+    try:
+        datos = json.loads(s.string)
+    except json.JSONDecodeError:
+        log.warning("El JSON del listado está dañado: no se verifica desde el listado")
+        return {}
+    rx = re.compile(patron)
+    salida, pila = {}, [datos]
+    while pila:
+        nodo = pila.pop()
+        if isinstance(nodo, list):
+            pila.extend(nodo)
+            continue
+        if not isinstance(nodo, dict):
+            continue
+        url = None
+        for k in ("link", "url", "href", "path", "slug", "permalink", "canonical"):
+            v = nodo.get(k)
+            if isinstance(v, str) and v:
+                candidata = urljoin(base, v).split("?")[0].split("#")[0].rstrip("/")
+                if rx.match(candidata):
+                    url = candidata
+                    break
+        precio = None
+        for k, v in nodo.items():
+            if _INDICE.get(_clave(k)) == "precio":
+                precio = _escalar(v)
+                if precio:
+                    break
+        if url and precio and url not in salida:
+            salida[url] = precio
+        pila.extend(v for v in nodo.values() if isinstance(v, (dict, list)))
+    log.debug("Listado: %d tarjetas con enlace y precio", len(salida))
     return salida

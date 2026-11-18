@@ -20,6 +20,8 @@ def cliente(tmp_path_factory):
     mp.setattr(entrenar, "METRICAS", raiz / "artefactos" / "metricas.json")
     mp.delenv("VIVIENDA_DATASET", raising=False)
     mp.setenv("VIVIENDA_AUTOMATICO", "0")   # las pruebas nunca visitan portales
+    mp.setenv("VIVIENDA_DEMO", "1")         # solo en pruebas: datos sintéticos
+    mp.setenv("DATABASE_URL", f"sqlite:///{raiz}/prueba.db")
     from modelo import estimar
     mp.setattr(estimar, "MODELO", entrenar.MODELO)
     import app.main as principal

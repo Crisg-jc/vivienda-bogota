@@ -464,3 +464,27 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 .error-seccion { margin: 1rem 0; padding: .85rem 1rem; border-left: 3px solid var(--ladrillo, #B4472C);
   background: rgba(180, 71, 44, .07); color: var(--paramo, #17322C); border-radius: 4px; }
 .registros-enlaces a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+/* ================================================================ trazabilidad y datos reales */
+.aviso-fuente { background: var(--ambar-fondo); border-bottom: 1px solid #E3CFA6; color: #4D3608; font-size: var(--t-s); }
+.aviso-fuente p { max-width: var(--ancho); margin: 0 auto; padding: .6rem var(--hueco); }
+
+.fuente { display: inline-flex; flex-direction: column; line-height: 1.25; font-size: var(--t-s); }
+.fuente small { color: var(--musgo); font-size: .82em; }
+.fuente--vieja small { color: var(--ambar); font-weight: 600; }
+.fuente--retirado small { color: var(--ladrillo); font-weight: 600; }
+.lista-avisos .fuente { display: block; margin-top: .15rem; }
+
+.sin-datos { padding: clamp(2rem, 6vw, 4rem) 0; max-width: 46rem; }
+.sin-datos h1 { font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: clamp(1.6rem, 4vw, 2.4rem);
+  line-height: 1.1; margin: 0 0 1rem; color: var(--paramo); }
+.sin-datos p { margin: 0 0 1rem; }
+.cifras-base { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.cifras-base dt { font-size: var(--t-s); color: var(--musgo); }
+.cifras-base dd { margin: 0; font-size: 1.6rem; font-weight: 600; color: var(--paramo); }
+@media (max-width: 560px) { .cifras-base { grid-template-columns: minmax(0, 1fr); } }
+
+/* Sin datos reales: se ocultan las secciones que necesitan cálculos; queda el avance de la recolección */
+body.modo-sin-datos #estimar, body.modo-sin-datos #zonas, body.modo-sin-datos #mercado,
+body.modo-sin-datos #avisos, body.modo-sin-datos #modelo, body.modo-sin-datos .barra__nav,
+body.modo-sin-datos .precio-flotante { display: none; }
