@@ -275,7 +275,7 @@ function construirFormulario(ref) {
     control.innerHTML = `<button type="button" aria-label="Menos ${etiqueta.textContent.toLowerCase()}">−</button>
       <output aria-live="polite"></output>
       <button type="button" aria-label="Más ${etiqueta.textContent.toLowerCase()}">+</button>`;
-    c.appendChild(control);
+    etiqueta.after(control);      // etiqueta, control y debajo la pista de la zona
     const [menos, salida, mas] = control.children;
     const pintar = () => { salida.textContent = valor; menos.disabled = valor <= min; mas.disabled = valor >= max; c.dataset.valor = valor; };
     c.fijar = (v) => { valor = Math.min(max, Math.max(min, v)); pintar(); };
@@ -336,6 +336,7 @@ function pintarPerfil(p) {
   $("#pz-titulo").textContent = p.n
     ? `Lo que hay en ${p.zona}: ${fmt.format(p.n)} avisos reales`
     : `No hay avisos reales de ${p.zona} todavía`;
+  $("#pz-resumen").textContent = p.n ? `Mediana ${corto(p.precio.mediana)} · m² ${m2(p.m2.mediana)} · ver detalle` : "";
   const cuerpo = $("#pz-cuerpo");
   const pistas = { estrato: $("#p-estrato"), habitaciones: $("#p-habitaciones"), banos: $("#p-banos"),
     parqueaderos: $("#p-parqueaderos"), area: $("#p-area") };
@@ -352,14 +353,13 @@ function pintarPerfil(p) {
   }
   const comun = (c, unidad) => {
     const m = p.comunes[c];
-    return m ? `Lo más común en ${p.zona}: ${m.valor}${unidad} (${fmt.format(Math.round(m.porcentaje * 100))} %)` : "";
+    return m ? `Común: ${m.valor}${unidad} (${fmt.format(Math.round(m.porcentaje * 100))} %)` : "";
   };
-  pistas.estrato.textContent = `Números: avisos de cada estrato en ${p.zona}. ` + (p.estratos.length
-    ? `Hay de estrato ${p.estratos.map((e) => e.valor).join(", ")}.` : "");
+  pistas.estrato.textContent = `· el número es cuántos avisos hay en ${p.zona}`;
   pistas.habitaciones.textContent = comun("habitaciones", "");
   pistas.banos.textContent = comun("banos", "");
   pistas.parqueaderos.textContent = comun("parqueaderos", "");
-  pistas.area.textContent = `En ${p.zona} se publican de ${fmt.format(Math.round(p.area.min))} a ${fmt.format(Math.round(p.area.max))} m²; la mitad mide menos de ${fmt.format(Math.round(p.area.mediana))} m².`;
+  pistas.area.textContent = `Aquí se publican de ${fmt.format(Math.round(p.area.min))} a ${fmt.format(Math.round(p.area.max))} m² (mitad bajo ${fmt.format(Math.round(p.area.mediana))} m²).`;
   const tramosArea = p.area.tramos.map((t) => ({ valor: t.hasta ? `${t.desde}–${t.hasta}` : `${t.desde}+`, n: t.n }));
   const tramosAnt = p.antiguedad.tramos.map((t) => ({ valor: t.tramo, n: t.n }));
   const sinDato = (c) => (p.sin_dato[c] ? ` <small>(${fmt.format(p.sin_dato[c])} sin dato)</small>` : "");

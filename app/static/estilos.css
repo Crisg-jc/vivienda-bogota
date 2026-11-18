@@ -86,16 +86,17 @@ main { max-width: var(--ancho); margin: 0 auto; padding: 0 var(--hueco); }
 .estimar {
   display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   grid-template-areas: "intro intro" "form resumen" "explicacion explicacion" "parecidos efectos";
-  gap: 1.75rem clamp(1.5rem, 4vw, 3rem);
-  padding: clamp(1.75rem, 4vw, 3rem) 0 clamp(2.5rem, 5vw, 4rem);
+  gap: 1.25rem clamp(1.5rem, 4vw, 3rem);
+  padding: clamp(1rem, 2.2vw, 1.75rem) 0 clamp(2.5rem, 5vw, 4rem);
 }
 /* título y entrada lado a lado: la herramienta sube a la primera pantalla */
 .estimar__intro { grid-area: intro; display: grid; grid-template-columns: minmax(0, 8fr) minmax(0, 4fr); gap: 1rem 3rem; align-items: end; }
-.estimar h1 { font-size: var(--t-xxl); font-weight: 800; letter-spacing: -.025em; line-height: 1.02; text-wrap: balance; }
-.entrada { font-size: var(--t-m); line-height: 1.5; color: var(--musgo); max-width: 30rem; padding-bottom: .3rem; }
+/* El título se mantiene compacto: el formulario completo y el precio deben caber en la primera pantalla */
+.estimar h1 { font-size: clamp(1.55rem, 2.5vw, 2.25rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.05; text-wrap: balance; }
+.entrada { font-size: var(--t-s); line-height: 1.45; color: var(--musgo); max-width: 30rem; padding-bottom: .15rem; }
 
 /* ---- formulario */
-.formulario { grid-area: form; display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem 1rem; align-content: start; }
+.formulario { grid-area: form; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem 1rem; align-content: start; }
 .campo { display: flex; flex-direction: column; gap: .4rem; border: 0; padding: 0; margin: 0; min-width: 0; }
 .campo--ancho { grid-column: 1 / -1; }
 .campo label, .campo legend, .contador__etiqueta { font-size: var(--t-s); font-weight: 600; padding: 0; }
@@ -123,7 +124,13 @@ input[type=number]:hover, select:hover { border-color: var(--paramo); }
 .segmentos button[aria-checked=true] { background: var(--paramo); color: #fff; }
 .segmentos button[aria-checked=true]::after { background: var(--ladrillo); }
 
-.contadores { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+/* Habitaciones, baños, parqueaderos y antigüedad en una sola fila: se ven sin bajar */
+.contadores { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
+.contadores .campo { gap: .3rem; }
+.contadores .con-sufijo input { min-height: 2.75rem; padding-right: 2.8rem; }
+.contadores .con-sufijo span { right: .6rem; font-size: var(--t-xs); }
+.contador__etiqueta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contador__etiqueta .opcional { font-weight: 400; color: var(--musgo); font-size: .85em; }
 .contador__control { display: flex; align-items: center; border: 1px solid var(--borde-campo); border-radius: var(--radio); background: var(--papel); min-height: 2.75rem; }
 .contador__control button { width: 2.6rem; align-self: stretch; border: 0; background: none; font: 500 1.25rem/1 var(--texto); color: var(--musgo); cursor: pointer; }
 .contador__control button:hover { color: var(--paramo); background: var(--niebla); }
@@ -406,8 +413,10 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
   .barra { gap: .4rem 1rem; padding-top: .5rem; padding-bottom: .4rem; }
   .barra__nav { order: 3; width: 100%; justify-content: space-between; margin: 0 -.5rem; }
   .barra__nav a { padding: .4rem .6rem; }
-  .formulario { grid-template-columns: 1fr; }
-  .contadores { gap: .5rem; }
+  .formulario { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .9rem .75rem; }
+  .formulario select { font-size: var(--t-s); }
+  .estimar .entrada { display: none; }
+  .contadores { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem .6rem; }
   .contador__control button { width: 2.2rem; }
   .efecto { grid-template-columns: 6.5rem 1fr 4.8rem; gap: .5rem; }
   .barra-loc { grid-template-columns: 1fr auto; grid-template-areas: "nombre valor" "pista pista"; row-gap: .15rem; margin-bottom: .35rem; }
@@ -538,3 +547,15 @@ body.modo-sin-datos .precio-flotante { display: none; }
 .diferencias li { margin: .2rem 0; }
 .contraste { font-size: var(--t-s); margin: 0 0 .6rem; }
 @media (max-width: 720px) { .explica { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---- formulario compacto: pistas en una línea y perfil de la zona plegado al final */
+.pista--linea { display: inline; margin: 0 0 0 .35rem; font-weight: 400; }
+.contadores .pista { min-height: 1.1em; margin-top: 0; font-size: .72rem; }
+.perfil-zona summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; list-style: none; }
+.perfil-zona summary::-webkit-details-marker { display: none; }
+.perfil-zona summary::before { content: "▸"; color: var(--musgo); transition: transform .15s; display: inline-block; }
+.perfil-zona[open] summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .perfil-zona summary::before { transition: none; } }
+.perfil-zona[open] summary { margin-bottom: .2rem; }
+.pz-resumen { font-weight: 400; font-size: var(--t-xs); color: var(--musgo); }
+.campo-corto { min-height: 2.75rem; text-align: center; font-variant-numeric: tabular-nums; }

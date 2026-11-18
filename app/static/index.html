@@ -55,33 +55,27 @@
       </div>
 
       <form class="formulario" id="formulario" novalidate aria-describedby="nota-form">
-        <div class="campo campo--ancho">
+        <div class="campo">
           <label for="area">Área construida</label>
           <div class="con-sufijo">
             <input id="area" name="area_m2" type="number" inputmode="decimal" min="15" max="1000" step="1" value="70" required>
             <span>m²</span>
           </div>
           <input class="deslizador" id="area-rango" type="range" min="25" max="300" step="1" value="70" aria-label="Área construida (deslizador)">
-          <small class="pista" id="p-area"></small>
         </div>
 
-        <fieldset class="campo campo--ancho">
-          <legend>Estrato</legend>
-          <div class="segmentos" id="estratos" role="radiogroup" aria-label="Estrato"></div>
-          <small class="pista" id="p-estrato"></small>
-        </fieldset>
-
-        <div class="campo campo--ancho">
+        <div class="campo">
           <label for="localidad">Localidad</label>
           <select id="localidad" name="localidad">
             <option value="">No sé o prefiero no decir</option>
           </select>
+          <small class="pista" id="p-area"></small>
         </div>
 
-        <details class="perfil-zona campo--ancho" id="perfil-zona" open>
-          <summary id="pz-titulo">Lo que hay en Bogotá</summary>
-          <div id="pz-cuerpo"></div>
-        </details>
+        <fieldset class="campo campo--ancho">
+          <legend>Estrato <small class="pista pista--linea" id="p-estrato"></small></legend>
+          <div class="segmentos" id="estratos" role="radiogroup" aria-label="Estrato"></div>
+        </fieldset>
 
         <div class="contadores">
           <div class="campo contador" data-nombre="habitaciones" data-min="0" data-max="8" data-valor="3">
@@ -96,13 +90,9 @@
             <span class="contador__etiqueta" id="l-par">Parqueaderos</span>
             <small class="pista" id="p-parqueaderos"></small>
           </div>
-        </div>
-
-        <div class="campo campo--ancho">
-          <label for="antiguedad">Antigüedad <span class="opcional">(opcional)</span></label>
-          <div class="con-sufijo">
-            <input id="antiguedad" name="antiguedad" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="Sin dato">
-            <span>años</span>
+          <div class="campo">
+            <label for="antiguedad" class="contador__etiqueta">Antigüedad, años</label>
+            <input id="antiguedad" class="campo-corto" name="antiguedad" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="Opcional">
           </div>
         </div>
 
@@ -111,6 +101,11 @@
           El precio se actualiza mientras cambia los datos.
         </p>
         <p class="error" id="error-form" role="alert" hidden></p>
+
+        <details class="perfil-zona campo--ancho" id="perfil-zona">
+          <summary><span id="pz-titulo">Lo que hay en Bogotá</span><span class="pz-resumen" id="pz-resumen"></span></summary>
+          <div id="pz-cuerpo"></div>
+        </details>
       </form>
 
       <!-- Resumen: lo que se lee primero -->
