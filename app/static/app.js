@@ -260,6 +260,7 @@ function pintarResultado(r, datos) {
   pintarCinta(r);
   pintarEfectos(r);
   pintarSimilares(r.similares);
+  ubicarEstimacion(r, datos);
 }
 
 function pintarCinta(r) {
@@ -587,6 +588,7 @@ function pintarMapaZonas(geo, puntos) {
   if ($("#z-puntos").checked) ZONAS.capaPuntos.addTo(mapa);
   if (!pintarMapaZonas.encuadrado) { pintarMapaZonas.encuadrado = true; encuadrar("bogota"); }
   visibilidadPorZoom();
+  if (MINI.ultimo) marcarEnZonas(MINI.ultimo.pos, MINI.ultimo.r, MINI.ultimo.datos);   // la estimación llegó antes que el mapa
 }
 
 function textoZona(nombre) {
@@ -730,6 +732,112 @@ $("#z-ver-avisos").addEventListener("click", () => {
   $("#f-localidad").value = ZONAS.seleccion; paginaActual = 1; cargarAvisos();
   document.getElementById("avisos").scrollIntoView({ behavior: reducirMovimiento ? "auto" : "smooth" });
 });
+
+// ---------------------------------------------------------------- ubicación de la estimación en el mapa
+// Cada estimación se ubica sola: en el mapa del resultado y en el de Zonas. Tocar una localidad del
+// mapa del resultado la elige en el formulario y recalcula el precio.
+const CENTROS = {   // punto aproximado de la zona construida de cada localidad, dentro de su límite
+  "Usaquén": [4.715, -74.035], "Chapinero": [4.65, -74.06], "Santa Fe": [4.61, -74.07], "San Cristóbal": [4.565, -74.085],
+  "Usme": [4.5, -74.11], "Tunjuelito": [4.575, -74.135], "Bosa": [4.615, -74.19], "Kennedy": [4.63, -74.15],
+  "Fontibón": [4.675, -74.14], "Engativá": [4.705, -74.11], "Suba": [4.745, -74.08], "Barrios Unidos": [4.67, -74.075],
+  "Teusaquillo": [4.64, -74.08], "Los Mártires": [4.605, -74.09], "Antonio Nariño": [4.59, -74.1],
+  "Puente Aranda": [4.615, -74.115], "La Candelaria": [4.597, -74.072], "Rafael Uribe Uribe": [4.57, -74.115],
+  "Ciudad Bolívar": [4.54, -74.15], "Sumapaz": [4.05, -74.3],
+};
+const MINI = { mapa: null, capaLoc: null, marca: null, vecinos: null, punto: null, nombrePunto: null, localidad: null };
+
+function iconoEstimacion(precio) {
+  return L.divIcon({ className: "pin-estimado", iconSize: [0, 0],
+    html: `<span><small>Su apartamento</small>${corto(precio)}</span>` });
+}
+
+function puntoDe(localidad, similares) {
+  if (MINI.punto && MINI.nombrePunto === localidad) return MINI.punto;
+  const cerca = similares.filter((s) => s.localidad === localidad && s.latitud && s.longitud);
+  if (cerca.length) {
+    return L.latLng(cerca.reduce((a, s) => a + s.latitud, 0) / cerca.length, cerca.reduce((a, s) => a + s.longitud, 0) / cerca.length);
+  }
+  return CENTROS[localidad] ? L.latLng(CENTROS[localidad]) : null;
+}
+
+function estiloMini(f) {
+  const elegida = f.properties.nombre === MINI.localidad;
+  return elegida
+    ? { fillColor: "#B4472C", fillOpacity: 0.18, color: "#B4472C", weight: 2.5 }
+    : { fillColor: "#17322C", fillOpacity: 0.03, color: "#7C9486", weight: 0.8 };
+}
+
+// Encuadre del mini mapa. Se espera un cuadro para que invalidateSize ya haya medido la tarjeta
+// (recién mostrada) y se usa fitBounds: flyToBounds se cancela si llega otra estimación a mitad del vuelo.
+function encuadrarMini(limites, opciones) {
+  requestAnimationFrame(() => {
+    MINI.mapa.invalidateSize({ animate: false });
+    MINI.mapa.stop();
+    MINI.mapa.fitBounds(limites, { ...opciones, animate: !reducirMovimiento });
+  });
+}
+
+async function ubicarEstimacion(r, datos) {
+  if (!window.L) return;
+  const geo = await datosGeo();
+  if (!MINI.mapa) {
+    MINI.mapa = L.map("mini-mapa", { scrollWheelZoom: false, zoomControl: false, attributionControl: true, minZoom: 9, maxZoom: 16, zoomSnap: 0.25 });
+    L.control.zoom({ position: "topright" }).addTo(MINI.mapa);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>', maxZoom: 18,
+    }).addTo(MINI.mapa);
+    MINI.capaLoc = L.geoJSON(geo.loc, {
+      style: estiloMini,
+      onEachFeature: (f, capa) => {
+        const nombre = f.properties.nombre;
+        capa.bindTooltip(nombre, { sticky: true, className: "etiqueta-loc" });
+        capa.on("click", (e) => {
+          if (!ESTADO.localidades.includes(nombre)) return;   // Sumapaz es rural: el modelo no la conoce
+          MINI.punto = e.latlng; MINI.nombrePunto = nombre;
+          $("#localidad").value = nombre;
+          programar();
+        });
+      },
+    }).addTo(MINI.mapa);
+    MINI.vecinos = L.layerGroup().addTo(MINI.mapa);
+    MINI.mapa.fitBounds(L.latLngBounds([4.47, -74.215], [4.83, -74.01]));
+  }
+  MINI.mapa.invalidateSize();
+  MINI.localidad = datos.localidad;
+  MINI.capaLoc.setStyle(estiloMini);
+
+  MINI.vecinos.clearLayers();
+  for (const s of r.similares) {
+    if (!s.latitud || !s.longitud) continue;
+    L.circleMarker([s.latitud, s.longitud], { radius: 5, weight: 1.5, color: "#17322C", fillColor: "#FBFCFB", fillOpacity: 1 })
+      .bindTooltip(`${corto(s.precio)}, ${area(s.area_m2)}${s.localidad ? `<br>${esc(s.localidad)}` : ""}`, { className: "etiqueta-loc" })
+      .addTo(MINI.vecinos);
+  }
+
+  const pos = datos.localidad ? puntoDe(datos.localidad, r.similares) : null;
+  if (MINI.marca) { MINI.marca.remove(); MINI.marca = null; }
+  if (pos) {
+    MINI.marca = L.marker(pos, { icon: iconoEstimacion(r.precio), keyboard: false, zIndexOffset: 1000 }).addTo(MINI.mapa);
+    let limites = null;
+    MINI.capaLoc.eachLayer((c) => { if (c.feature.properties.nombre === datos.localidad) limites = c.getBounds(); });
+    if (limites) encuadrarMini(limites, { padding: [18, 18], maxZoom: 13.5 });
+    $("#mini-ayuda").textContent = `Ubicado en ${datos.localidad}. Toque otra localidad para moverlo; el precio se recalcula solo.`;
+  } else {
+    encuadrarMini(L.latLngBounds([4.47, -74.215], [4.83, -74.01]), {});
+    $("#mini-ayuda").textContent = "Toque una localidad del mapa para ubicar el apartamento; también puede elegirla en el formulario.";
+  }
+  MINI.ultimo = { pos, r, datos };
+  marcarEnZonas(pos, r, datos);
+}
+
+// El mapa grande de Zonas acompaña a la estimación: misma localidad y misma marca.
+function marcarEnZonas(pos, r, datos) {
+  if (!ZONAS.mapa) return;
+  if (ZONAS.marcaEstimacion) { ZONAS.marcaEstimacion.remove(); ZONAS.marcaEstimacion = null; }
+  if (!pos) return;
+  ZONAS.marcaEstimacion = L.marker(pos, { icon: iconoEstimacion(r.precio), keyboard: false, zIndexOffset: 1000 }).addTo(ZONAS.mapa);
+  if (datos.localidad !== ZONAS.seleccion) seleccionarZona(datos.localidad, { encuadrar: true });
+}
 
 // ---------------------------------------------------------------- actualización automática
 let FIRMA_DATASET = null, sondeo = null;

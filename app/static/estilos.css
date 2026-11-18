@@ -436,3 +436,26 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 
 /* Aviso para navegadores sin JavaScript o demasiado antiguos */
 .sin-soporte { margin: 0; padding: 1rem 1.25rem; background: #F6ECD8; color: #4D3608; border-bottom: 1px solid #E3CFA6; font: 600 1rem/1.5 system-ui, sans-serif; text-align: center; }
+
+/* ================================================================ ubicación del apartamento estimado */
+.ubicar { margin: 1.1rem 0 0; }
+.mini-mapa { height: 15rem; border-radius: var(--radio); border: 1px solid var(--linea); background: #E4E9E5; }
+.ubicar__leyenda { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem 1.1rem; margin-top: .45rem; font-size: var(--t-xs); color: var(--musgo); }
+.ubicar__leyenda span { display: inline-flex; align-items: center; gap: .4rem; }
+.ubicar__ayuda { flex-basis: 100%; }
+.pin-mini { width: .8rem; height: .8rem; border-radius: 50% 50% 50% 0; background: var(--ladrillo); transform: rotate(-45deg); }
+/* marca "Su apartamento" sobre el mapa */
+.pin-estimado { background: none; border: 0; }
+.pin-estimado span {
+  position: absolute; left: 0; bottom: 0; transform: translate(-50%, -12px);
+  background: var(--ladrillo); color: #fff; font: 700 13px/1 var(--texto); white-space: nowrap;
+  padding: .4rem .55rem; border-radius: 6px; box-shadow: 0 4px 12px rgba(23, 50, 44, .3);
+}
+.pin-estimado span::after {
+  content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px;
+  border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid var(--ladrillo);
+}
+.pin-estimado small { display: block; font: 500 10.5px/1.2 var(--texto); opacity: .9; margin-bottom: 2px; }
+@media (max-width: 640px) { .mini-mapa { height: 13rem; } }
+/* Al tocar una zona, el navegador no debe dibujar el recuadro de foco del trazo SVG */
+.leaflet-container path.leaflet-interactive:focus { outline: none; }

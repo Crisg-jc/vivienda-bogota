@@ -151,7 +151,7 @@ def url_segura(u) -> str | None:
 def aviso(r) -> dict:
     d = {k: limpio(r.get(k)) for k in ["precio", "area_m2", "precio_m2", "habitaciones", "banos", "estrato",
                                        "parqueaderos", "antiguedad", "localidad", "barrio", "precio_esperado",
-                                       "diferencia_pct", "comparacion", "precio_anterior"]}
+                                       "diferencia_pct", "comparacion", "precio_anterior", "latitud", "longitud"]}
     d["url_origen"] = url_segura(r.get("url_origen"))
     return d
 
