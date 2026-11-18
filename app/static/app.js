@@ -193,6 +193,7 @@ async function iniciar() {
   }
   construirFormulario(ESTADO.referencia);
   REG.debug("Formulario listo con valores de la URL", leerFormulario());
+  cargarPerfil($("#localidad").value || null);
   estimarAhora();
   seguro("Cargar mercado", cargarMercado, avisoEnSeccion("#mercado .contenedor", "el análisis de mercado"));
   seguro("Cargar zonas", cargarZonas, avisoEnSeccion("#z-panel", "el análisis por zonas"));
@@ -250,7 +251,7 @@ function construirFormulario(ref) {
   estratoElegido = estratoURL ?? (Math.round(parseFloat(ref.estrato)) || 4);
   for (let e = 1; e <= 6; e++) {
     const b = document.createElement("button");
-    b.type = "button"; b.textContent = e; b.setAttribute("role", "radio");
+    b.type = "button"; b.innerHTML = `${e}<small class="segmento__n"></small>`; b.setAttribute("role", "radio");
     b.setAttribute("aria-label", `Estrato ${e}`);
     b.style.setProperty("--c", COLOR_ESTRATO[e]);
     b.setAttribute("aria-checked", String(e === estratoElegido));
@@ -286,7 +287,7 @@ function construirFormulario(ref) {
   const caja = $("#area"), rango = $("#area-rango");
   caja.addEventListener("input", () => { rango.value = caja.value; programar(); });
   rango.addEventListener("input", () => { caja.value = rango.value; programar(); });
-  $("#localidad").addEventListener("change", programar);
+  $("#localidad").addEventListener("change", () => { cargarPerfil($("#localidad").value || null); programar(); });
   $("#antiguedad").addEventListener("input", programar);
   $("#formulario").addEventListener("submit", (e) => { e.preventDefault(); estimarAhora(); });
 }
@@ -299,6 +300,93 @@ function elegirEstrato(e, enfocar) {
     if (activo && enfocar) b.focus();
   });
   programar();
+}
+
+// ---------------------------------------------------------------- perfil real de la zona
+// Antes de estimar se muestra qué tipos de apartamento existen de verdad en la localidad elegida,
+// y el formulario se adapta: cuántos avisos hay de cada estrato, lo común en habitaciones, baños y
+// parqueaderos, y el rango de áreas que se publica allí.
+const PERFILES = new Map();
+let perfilActual = null;
+
+async function cargarPerfil(localidad) {
+  const clave = localidad || "";
+  let p = PERFILES.get(clave);
+  if (!p) {
+    try { p = await api(`/api/perfil${localidad ? `?localidad=${encodeURIComponent(localidad)}` : ""}`); }
+    catch (e) { REG.warn(`No se pudo leer el perfil de ${localidad || "Bogotá"}`, e.message); return; }
+    PERFILES.set(clave, p);
+  }
+  if (($("#localidad").value || "") !== clave) return;     // el usuario ya eligió otra
+  perfilActual = p;
+  REG.debug(`Perfil de ${p.zona}: ${p.n} avisos`, p.comunes);
+  pintarPerfil(p);
+}
+
+const pctTexto = (n, total) => `${fmt.format(Math.round((n / total) * 100))} %`;
+
+function listaConteos(items, total, unidad) {
+  if (!items || !items.length) return `<span class="pz-nada">sin datos</span>`;
+  const max = Math.max(...items.map((i) => i.n));
+  return items.map((i) => `<span class="pz-barra" title="${fmt.format(i.n)} avisos (${pctTexto(i.n, total)})">
+      <b>${i.valor}${unidad}</b><i style="width:${Math.max(6, (i.n / max) * 100)}%"></i><em>${fmt.format(i.n)}</em></span>`).join("");
+}
+
+function pintarPerfil(p) {
+  $("#pz-titulo").textContent = p.n
+    ? `Lo que hay en ${p.zona}: ${fmt.format(p.n)} avisos reales`
+    : `No hay avisos reales de ${p.zona} todavía`;
+  const cuerpo = $("#pz-cuerpo");
+  const pistas = { estrato: $("#p-estrato"), habitaciones: $("#p-habitaciones"), banos: $("#p-banos"),
+    parqueaderos: $("#p-parqueaderos"), area: $("#p-area") };
+  document.querySelectorAll("#estratos button").forEach((b, i) => {
+    const n = p.n ? (p.estratos.find((x) => x.valor === i + 1)?.n ?? 0) : null;
+    b.querySelector(".segmento__n").textContent = n == null ? "" : fmt.format(n);
+    b.classList.toggle("segmento--vacio", n === 0);
+    b.setAttribute("aria-label", n == null ? `Estrato ${i + 1}` : `Estrato ${i + 1}, ${n} avisos en ${p.zona}`);
+  });
+  if (!p.n) {
+    cuerpo.innerHTML = `<p>${esc(p.mensaje || "")} La estimación buscará comparables en localidades vecinas y lo dirá.</p>`;
+    Object.values(pistas).forEach((x) => { x.textContent = ""; });
+    return;
+  }
+  const comun = (c, unidad) => {
+    const m = p.comunes[c];
+    return m ? `Lo más común en ${p.zona}: ${m.valor}${unidad} (${fmt.format(Math.round(m.porcentaje * 100))} %)` : "";
+  };
+  pistas.estrato.textContent = `Números: avisos de cada estrato en ${p.zona}. ` + (p.estratos.length
+    ? `Hay de estrato ${p.estratos.map((e) => e.valor).join(", ")}.` : "");
+  pistas.habitaciones.textContent = comun("habitaciones", "");
+  pistas.banos.textContent = comun("banos", "");
+  pistas.parqueaderos.textContent = comun("parqueaderos", "");
+  pistas.area.textContent = `En ${p.zona} se publican de ${fmt.format(Math.round(p.area.min))} a ${fmt.format(Math.round(p.area.max))} m²; la mitad mide menos de ${fmt.format(Math.round(p.area.mediana))} m².`;
+  const tramosArea = p.area.tramos.map((t) => ({ valor: t.hasta ? `${t.desde}–${t.hasta}` : `${t.desde}+`, n: t.n }));
+  const tramosAnt = p.antiguedad.tramos.map((t) => ({ valor: t.tramo, n: t.n }));
+  const sinDato = (c) => (p.sin_dato[c] ? ` <small>(${fmt.format(p.sin_dato[c])} sin dato)</small>` : "");
+  cuerpo.innerHTML = `
+    <dl class="pz-cifras">
+      <div><dt>Precio mediano</dt><dd>${corto(p.precio.mediana)}</dd></div>
+      <div><dt>Precio promedio</dt><dd>${corto(p.precio.promedio)}</dd></div>
+      <div><dt>m² promedio</dt><dd>${m2(p.m2.promedio)}</dd></div>
+      <div><dt>Precios del 80 % central</dt><dd>${corto(p.precio.p10)} a ${corto(p.precio.p90)}</dd></div>
+    </dl>
+    <div class="pz-grupo"><h3>Estrato${sinDato("estrato")}</h3>${listaConteos(p.estratos, p.n, "")}</div>
+    <div class="pz-grupo"><h3>Habitaciones${sinDato("habitaciones")}</h3>${listaConteos(p.habitaciones, p.n, "")}</div>
+    <div class="pz-grupo"><h3>Baños${sinDato("banos")}</h3>${listaConteos(p.banos, p.n, "")}</div>
+    <div class="pz-grupo"><h3>Parqueaderos${sinDato("parqueaderos")}</h3>${listaConteos(p.parqueaderos, p.n, "")}</div>
+    <div class="pz-grupo"><h3>Área (m²)</h3>${listaConteos(tramosArea, p.n, "")}</div>
+    <div class="pz-grupo"><h3>Antigüedad <small>(informada en ${fmt.format(p.antiguedad.informados)} de ${fmt.format(p.n)})</small></h3>${listaConteos(tramosAnt, p.antiguedad.informados || 1, "")}</div>
+    ${p.tipos.length ? `<div class="pz-grupo pz-tipos"><h3>Tipos más publicados</h3><ul>${p.tipos.map((t) =>
+      `<li><button type="button" class="pz-tipo" data-tipo='${esc(JSON.stringify(t))}'>Estrato ${t.estrato}, ${t.habitaciones} hab.${t.banos != null ? `, ${t.banos} baños` : ""}${t.parqueaderos != null ? `, ${t.parqueaderos} parq.` : ""}</button> <em>${fmt.format(t.n)} avisos</em></li>`).join("")}</ul>
+      <p class="como-leer">Toque un tipo para estimarlo.</p></div>` : ""}`;
+  cuerpo.querySelectorAll(".pz-tipo").forEach((b) => b.addEventListener("click", () => {
+    const t = JSON.parse(b.dataset.tipo);
+    REG.info("Tipo de la zona elegido desde el perfil", t);
+    for (const n of ["habitaciones", "banos", "parqueaderos"]) {
+      if (t[n] != null) document.querySelector(`.contador[data-nombre=${n}]`).fijar(t[n]);
+    }
+    elegirEstrato(t.estrato, false);
+  }));
 }
 
 let temporizador;
@@ -329,7 +417,9 @@ async function estimarAhora() {
   try {
     const r = await api("/api/estimar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(datos) });
     if (id !== ultimaPeticion) { REG.debug(`Estimación ${id} descartada: llegó una más nueva (${ultimaPeticion})`); return; }
-    REG.debug(`Estimación: ${datos.area_m2} m², estrato ${datos.estrato}, ${datos.localidad || "sin localidad"} -> ${corto(r.precio)} (${corto(r.minimo)}–${corto(r.maximo)})`);
+    REG.debug(r.precio == null
+      ? `Sin estimación: no hay comparables para ${datos.area_m2} m², estrato ${datos.estrato}, ${datos.localidad || "sin localidad"}`
+      : `Estimación: ${datos.area_m2} m², estrato ${datos.estrato}, ${datos.localidad || "sin localidad"} -> ${corto(r.precio)} (${corto(r.minimo)}–${corto(r.maximo)}), ${r.comparables.usados} comparables, confiabilidad ${r.comparables.confiabilidad}`);
     pintarResultado(r, datos);
   } catch (e) {
     REG.error("Falló la estimación", { mensaje: e.message, datos, pila: e.stack });
@@ -340,15 +430,75 @@ async function estimarAhora() {
 // ---------------------------------------------------------------- resultado
 let primeraVez = true;
 
+const NIVEL = { alta: "Confiabilidad alta", media: "Confiabilidad media", baja: "Confiabilidad baja", insuficiente: "Sin información suficiente" };
+
+function pintarViabilidad(r, datos) {
+  const c = r.comparables, caja = $("#r-viabilidad");
+  caja.dataset.nivel = c.confiabilidad;
+  const zona = c.zona;
+  const encontrados = c.viable
+    ? `Encontré ${fmt.format(c.encontrados)} apartamento${c.encontrados === 1 ? "" : "s"} ${esc(c.criterio)}; uso ${c.usados === c.encontrados ? "todos" : `los ${fmt.format(c.usados)} más parecidos`}.`
+    : `Revisé ${fmt.format(c.avisos_en_zona)} avisos reales de ${esc(zona)} y amplié la búsqueda paso a paso, sin encontrar apartamentos comparables.`;
+  caja.innerHTML = `<p class="viabilidad__nivel"><span class="semaforo" aria-hidden="true"></span>${NIVEL[c.confiabilidad]}</p>
+    <p>${encontrados}</p>
+    ${c.amplio && c.viable ? `<p class="viabilidad__aviso">No había suficientes coincidencias exactas: la búsqueda se amplió (detalle abajo, en "Cómo se obtuvo").</p>` : ""}
+    ${c.viable ? "" : `<p>${esc(c.razones[0])}</p><p>Pruebe con características más comunes en ${esc(zona)} (vea "Lo que hay en ${esc(zona)}" en el formulario) o sin localidad.</p>`}`;
+}
+
+function pintarExplicacion(r, datos) {
+  const c = r.comparables, caja = $("#r-explicacion");
+  const pasos = c.pasos.map((p, i) => `<li${p.clave === c.paso ? ' class="elegido"' : ""}><span>${i + 1}. Buscar ${esc(p.criterio)}</span><b>${fmt.format(p.encontrados)}</b></li>`).join("");
+  if (!c.viable) {
+    caja.innerHTML = `<p>Búsquedas hechas, de la más estricta a la más amplia, y cuántos apartamentos reales encontró cada una:</p><ol class="pasos">${pasos}</ol>
+      <p>Ninguna encontró apartamentos comparables, así que no se calcula un precio.</p>`;
+    return;
+  }
+  const origen = c.origen.localidades.map((o) => `${esc(o.localidad)} (${o.n})`).join(", ");
+  const barrios = c.origen.barrios.length ? c.origen.barrios.map((o) => `${esc(o.barrio)} (${o.n})`).join(", ") : "los avisos no informan barrio";
+  caja.innerHTML = `
+    <dl class="explica">
+      <div><dt>Apartamentos encontrados</dt><dd>${fmt.format(c.encontrados)}</dd></div>
+      <div><dt>Usados como referencia</dt><dd>${fmt.format(c.usados)}</dd></div>
+      <div><dt>Precio promedio de los comparables</dt><dd>${corto(c.promedio_precio)}</dd></div>
+      <div><dt>m² promedio · mediano</dt><dd>${m2(c.promedio_m2)} · ${m2(c.mediana_m2)}</dd></div>
+      <div><dt>Rango razonable</dt><dd>${corto(c.minimo)} a ${corto(c.maximo)}</dd></div>
+      <div><dt>Confiabilidad</dt><dd>${NIVEL[c.confiabilidad].replace("Confiabilidad ", "")}</dd></div>
+    </dl>
+    <h3>Cómo se calculó</h3>
+    <p>Precio = m² mediano de los ${fmt.format(c.usados)} comparables (${m2(c.mediana_m2)}) × ${fmt.format(datos.area_m2)} m². El rango usa la mitad central de sus precios por m²${c.usados < 5 ? " (con tan pocos, todo lo observado)" : ""}.</p>
+    <h3>Características tenidas en cuenta</h3><p>${esc(c.considerados.join(", "))}.</p>
+    <h3>Búsquedas, de la más estricta a la más amplia</h3><ol class="pasos">${pasos}</ol>
+    <h3>De dónde vienen</h3><p>Localidades: ${origen}. Barrios: ${barrios}.</p>
+    <h3>Diferencias con su apartamento</h3><ul class="diferencias">${c.diferencias.map((d) => `<li>${esc(d)}</li>`).join("")}</ul>
+    <h3>Por qué esta confiabilidad</h3><ul class="diferencias">${c.razones.map((d) => `<li>${esc(d)}</li>`).join("")}</ul>`;
+}
+
 function pintarResultado(r, datos) {
   $("#resultado-vacio").hidden = true;
   $("#resultado-lleno").hidden = false;
   $("#detalle").hidden = false;
   $("#resultado").setAttribute("aria-busy", "false");
+  pintarViabilidad(r, datos);
+  pintarExplicacion(r, datos);
+  const conPrecio = r.precio != null;
+  $("#r-con-precio").hidden = !conPrecio;
+  document.querySelector("#detalle .efectos").hidden = !conPrecio;
+  document.querySelector("#detalle .parecidos").hidden = !conPrecio;
+  if (interactuo) escribirURL(datos);
+  if (!conPrecio) {
+    $("#pf-precio").textContent = "Sin información suficiente";
+    hayResultado = true; actualizarFlotante();
+    $("#r-advertencias").replaceChildren();
+    ubicarEstimacion(r, datos);
+    return;
+  }
+  const mo = r.modelo;
+  $("#r-contraste").textContent = mo.diferencia_pct == null ? "" : Math.abs(mo.diferencia_pct) < 0.05
+    ? `El modelo (${mo.nombre}) da casi lo mismo: ${corto(mo.precio)}. Dos métodos distintos coinciden.`
+    : `El modelo (${mo.nombre}), entrenado con todos los avisos, da ${corto(mo.precio)}: ${fmt.format(Math.abs(Math.round(mo.diferencia_pct * 100)))} % ${mo.diferencia_pct > 0 ? "más" : "menos"} que los comparables. Cuando difieren mucho, conviene mirar los comparables uno por uno.`;
   const rotulo = $("#r-rotulo");
   rotulo.textContent = interactuo ? "Precio de publicación estimado" : "Ejemplo con un apartamento típico: cambie los datos para ver el suyo";
   rotulo.classList.toggle("resultado__rotulo--ejemplo", !interactuo);
-  if (interactuo) escribirURL(datos);
   $("#r-precio").textContent = millones(r.precio);
   $("#pf-precio").textContent = millones(r.precio);
   hayResultado = true; actualizarFlotante();
@@ -430,7 +580,7 @@ function pintarEfectos(r) {
   const ref = r.referencia;
   $("#r-efectos-guia").textContent = `Comparado con el apartamento típico de los datos (${ref.area_m2}, estrato ${ref.estrato}${ref.localidad && ref.localidad !== "Sin dato" ? `, ${ref.localidad}` : ""}): cuánto cambia la estimación por cada característica distinta. Son aproximaciones; los efectos no se suman exactamente.`;
   if (!r.efectos.length) {
-    caja.innerHTML = `<p class="efectos__vacio">Este apartamento se parece al típico, o el modelo (${esc(r.modelo)}) no usa las características en las que difiere.</p>`;
+    caja.innerHTML = `<p class="efectos__vacio">Este apartamento se parece al típico, o el modelo (${esc(r.modelo.nombre)}) no usa las características en las que difiere.</p>`;
     return;
   }
   const maximo = Math.max(...r.efectos.map((e) => Math.abs(e.efecto)));
@@ -833,6 +983,7 @@ function pintarPanelZona(d) {
 function llevarAlEstimador(datos) {
   $("#area").value = datos.area_m2; $("#area-rango").value = datos.area_m2;
   $("#localidad").value = datos.localidad;
+  cargarPerfil(datos.localidad);
   for (const n of ["habitaciones", "banos", "parqueaderos"]) {
     if (datos[n] != null) document.querySelector(`.contador[data-nombre=${n}]`).fijar(datos[n]);
   }
@@ -884,7 +1035,7 @@ const MINI = { mapa: null, capaLoc: null, marca: null, vecinos: null, punto: nul
 
 function iconoEstimacion(precio) {
   return L.divIcon({ className: "pin-estimado", iconSize: [0, 0],
-    html: `<span><small>Su apartamento</small>${corto(precio)}</span>` });
+    html: `<span><small>Su apartamento</small>${precio == null ? "Sin comparables" : corto(precio)}</span>` });
 }
 
 function puntoDe(localidad, similares) {
@@ -948,6 +1099,7 @@ async function ubicarEstimacionSinRegistro(r, datos) {
           REG.info(`Mini mapa: tocó ${nombre}; se recalcula el precio`, { lat: e.latlng.lat, lng: e.latlng.lng });
           MINI.punto = e.latlng; MINI.nombrePunto = nombre;
           $("#localidad").value = nombre;
+          cargarPerfil(nombre);
           programar();
         });
       },

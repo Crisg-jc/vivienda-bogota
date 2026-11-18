@@ -52,7 +52,9 @@ def test_estimar_devuelve_rango_y_parecidos(cliente):
     assert r.status_code == 200
     d = r.json()
     assert d["minimo"] <= d["precio"] <= d["maximo"]
-    assert d["precio"] > 0 and len(d["similares"]) == 6
+    assert d["precio"] > 0 and len(d["similares"]) == d["comparables"]["usados"] > 0
+    assert d["comparables"]["confiabilidad"] in ("alta", "media", "baja")
+    assert d["modelo"]["precio"] > 0
     assert d["demo"] is True
 
 
@@ -207,3 +209,12 @@ def test_linea_base_no_abarata_un_estrato_sin_datos():
     m = LineaBase().fit(X, y)
     p = m.predict(pd.DataFrame({"localidad": "Suba", "estrato": [1, 2, 3, 4, 5, 6], "area_m2": 100}))
     assert all(p[i] < p[i + 1] for i in range(5)), p
+
+
+def test_perfil_de_localidad(cliente):
+    c, _ = cliente
+    p = c.get("/api/perfil", params={"localidad": "Suba"}).json()
+    assert p["zona"] == "Suba" and p["n"] > 0
+    assert sum(x["n"] for x in p["estratos"]) + p["sin_dato"]["estrato"] == p["n"]
+    assert c.get("/api/perfil").json()["zona"] == "Bogotá"
+    assert c.get("/api/perfil", params={"localidad": "Atlantis"}).status_code == 404

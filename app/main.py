@@ -34,8 +34,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from comun import registro
 from comun.registro import cronometro
 from limpieza.normalizar import LOCALIDADES
+from modelo import comparables, demo, entrenar, estimar
 from modelo import datos as D
-from modelo import demo, entrenar, estimar
 from scraper import db
 
 from .automatizacion import Orquestador
@@ -445,35 +445,73 @@ class Entrada(BaseModel):
 
 @app.post("/api/estimar")
 def api_estimar(e: Entrada):
+    """Primero mira qué hay de verdad en la zona y busca apartamentos comparables; el precio sale de
+    ellos (mediana del m² × área) y el modelo queda como contraste. Sin comparables no hay precio."""
     listo()
     datos = e.model_dump()
     t = time.perf_counter()
     log_api.debug("Estimar con: %s", datos)
-    res = estimar.estimar(ESTADO["art"], datos)
-    log_api.debug("Modelo %s -> precio %.0f (rango %.0f–%.0f), %.0f/m²", ESTADO["art"]["nombre"], res["precio"],
-                  res["minimo"], res["maximo"], res["precio_m2"])
-    df = ESTADO["df"]
+    df = vigentes(ESTADO["df"])
+    comp = comparables.estimar(df, datos)
+    usados = comp.pop("comparables")
+    log_api.debug("Comparables: %s", {k: v for k, v in comp.items() if k not in ("diferencias", "origen")})
+    res = estimar.estimar(ESTADO["art"], datos)          # efectos, advertencias y referencia del modelo
+    modelo = {"nombre": ESTADO["art"]["nombre"], "precio": res["precio"], "minimo": res["minimo"],
+              "maximo": res["maximo"], "precio_m2": res["precio_m2"]}
+    if comp["viable"]:
+        res.update(precio=comp["precio"], minimo=comp["minimo"], maximo=comp["maximo"], precio_m2=comp["precio_m2"])
+        modelo["diferencia_pct"] = modelo["precio"] / comp["precio"] - 1 if comp["precio"] else None
+    else:
+        res.update(precio=None, minimo=None, maximo=None, precio_m2=None)
+    res["comparables"] = comp
+    res["modelo"] = modelo
+    res["similares"] = [aviso(r) for r in usados.to_dict("records")]
     mismo = df.loc[df["estrato"] == e.estrato, "precio_m2"].dropna()
     res["contexto"] = {
         "estrato_avisos": int(len(mismo)),
         "estrato_mediana_m2": float(mismo.median()) if len(mismo) else None,
-        "percentil_m2": round(float((mismo < res["precio_m2"]).mean()) * 100) if len(mismo) else None,
+        "percentil_m2": round(float((mismo < res["precio_m2"]).mean()) * 100) if len(mismo) and res["precio_m2"] else None,
     }
-    res["similares"] = [aviso(r) for r in estimar.similares(df, datos).to_dict("records")]
     z = next((z for z in ESTADO["zonas"]["localidades"] if z["nombre"] == e.localidad and z["n"]), None)
-    res["zona"] = None if z is None else {
+    res["zona"] = None if z is None or not res["precio_m2"] else {
         "localidad": z["nombre"], "n": z["n"], "mediana_m2": z["mediana_m2"],
         "diferencia_m2_pct": res["precio_m2"] / z["mediana_m2"] - 1, "p10_precio": z["p10_precio"],
         "p90_precio": z["p90_precio"]}
-    res["modelo"] = ESTADO["art"]["nombre"]
     res["demo"] = ESTADO["tipo"] == "demo"
-    if e.localidad and res["zona"] is None:
-        log_api.info("Estimación en %s sin estadísticas de zona (no hay avisos de esa localidad)", e.localidad)
-    log_api.info("Estimación: %s m², estrato %s, %s -> $%s (rango $%s–$%s), %d parecidos, %.0fms",
-                 e.area_m2, e.estrato, e.localidad or "sin localidad", f"{res['precio']:,.0f}",
-                 f"{res['minimo']:,.0f}", f"{res['maximo']:,.0f}", len(res["similares"]),
-                 (time.perf_counter() - t) * 1000)
+    if comp["viable"]:
+        log_api.info("Estimación: %s m², estrato %s, %s -> $%s (rango $%s–$%s); %d comparables de %d (%s), "
+                     "confiabilidad %s; modelo %s $%s; %.0fms", e.area_m2, e.estrato, e.localidad or "sin localidad",
+                     f"{res['precio']:,.0f}", f"{res['minimo']:,.0f}", f"{res['maximo']:,.0f}", comp["usados"],
+                     comp["encontrados"], comp["paso"], comp["confiabilidad"], modelo["nombre"],
+                     f"{modelo['precio']:,.0f}", (time.perf_counter() - t) * 1000)
+    else:
+        log_api.info("Sin estimación: %s m², estrato %s, %s -> sin comparables (%s)", e.area_m2, e.estrato,
+                     e.localidad or "sin localidad", comp["pasos"])
     return res
+
+
+def vigentes(df: pd.DataFrame) -> pd.DataFrame:
+    """Sin los avisos que el portal ya retiró (la base lo sabe antes que el corte del dataset)."""
+    retirados = {u for u, t in TRAZA["por_url"].items() if not t["disponible"]}
+    return df[~df["url_origen"].isin(retirados)] if retirados else df
+
+
+_PERFILES: dict = {}
+
+
+@app.get("/api/perfil")
+def api_perfil(localidad: str | None = None):
+    """Qué tipos de apartamento existen de verdad en una localidad (o en Bogotá) y cuántos hay de cada uno."""
+    listo()
+    if localidad and localidad not in LOCALIDADES:
+        raise HTTPException(404, "Localidad desconocida.")
+    clave = (ESTADO["huella"], localidad, len(TRAZA["por_url"]))
+    if clave not in _PERFILES:
+        if len(_PERFILES) > 60:
+            _PERFILES.clear()
+        _PERFILES[clave] = comparables.perfil(vigentes(ESTADO["df"]), localidad)
+        log_api.debug("Perfil calculado para %s: %d avisos", localidad or "Bogotá", _PERFILES[clave]["n"])
+    return _PERFILES[clave]
 
 
 # ---------------------------------------------------------------- mercado

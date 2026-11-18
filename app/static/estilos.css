@@ -85,7 +85,7 @@ main { max-width: var(--ancho); margin: 0 auto; padding: 0 var(--hueco); }
 /* ================================================================ 1. estimar */
 .estimar {
   display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  grid-template-areas: "intro intro" "form resumen" "efectos parecidos";
+  grid-template-areas: "intro intro" "form resumen" "explicacion explicacion" "parecidos efectos";
   gap: 1.75rem clamp(1.5rem, 4vw, 3rem);
   padding: clamp(1.75rem, 4vw, 3rem) 0 clamp(2.5rem, 5vw, 4rem);
 }
@@ -149,7 +149,7 @@ input[type=number]:hover, select:hover { border-color: var(--paramo); }
 
 /* ---- resumen del precio */
 .tarjeta, .resumen { background: var(--papel); border: 1px solid var(--linea); border-radius: var(--radio-tarjeta); padding: clamp(1.25rem, 2.6vw, 1.85rem); min-width: 0; }
-.resumen { grid-area: resumen; display: flex; flex-direction: column; }
+.resumen { grid-area: resumen; display: flex; flex-direction: column; align-self: start; }
 .resultado__vacio { display: grid; gap: 1.5rem; color: var(--musgo); margin: auto 0; }
 .resultado__vacio p { font-size: var(--t-l); }
 .resultado__rotulo { font-size: var(--t-s); color: var(--musgo); font-weight: 500; }
@@ -190,6 +190,7 @@ input[type=number]:hover, select:hover { border-color: var(--paramo); }
 /* el detalle se reparte en las mismas columnas que formulario y resumen, para que los bordes coincidan */
 .detalle { display: contents; }
 .efectos { grid-area: efectos; align-self: start; }
+.explicacion { grid-area: explicacion; }
 .parecidos { grid-area: parecidos; align-self: start; }
 .tarjeta h2 { font-size: var(--t-l); }
 .efecto { display: grid; grid-template-columns: 8.5rem 1fr 5.5rem; align-items: center; gap: .75rem; padding: .5rem 0; border-bottom: 1px solid var(--linea-suave); font-size: var(--t-s); }
@@ -394,7 +395,7 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
   .precio-flotante { display: none !important; }
 }
 @media (max-width: 960px) {
-  .estimar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "intro" "form" "resumen" "efectos" "parecidos"; }
+  .estimar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "intro" "form" "resumen" "explicacion" "parecidos" "efectos"; }
   .estimar__intro { grid-template-columns: minmax(0, 1fr); }
   .ubicacion, .modelo, .zonas, .actualizacion { grid-template-columns: minmax(0, 1fr); }
   .mapa--zonas { height: 28rem; }
@@ -488,3 +489,52 @@ code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 
 body.modo-sin-datos #estimar, body.modo-sin-datos #zonas, body.modo-sin-datos #mercado,
 body.modo-sin-datos #avisos, body.modo-sin-datos #modelo, body.modo-sin-datos .barra__nav,
 body.modo-sin-datos .precio-flotante { display: none; }
+
+/* ================================================================ perfil de la zona y comparables */
+.pista { display: block; margin-top: .35rem; color: var(--musgo); font-size: var(--t-xs); line-height: 1.35; }
+.segmentos button small.segmento__n { display: block; font-size: .62rem; font-weight: 500; opacity: .75; line-height: 1; margin-top: .1rem; }
+.segmentos button.segmento--vacio { opacity: .45; }
+.segmentos button.segmento--vacio[aria-checked="true"] { opacity: 1; }
+
+.perfil-zona { border: 1px solid var(--linea); border-radius: var(--radio); background: var(--papel); padding: .7rem .9rem; }
+.perfil-zona summary { cursor: pointer; font-weight: 600; color: var(--paramo); }
+.perfil-zona h3 { font-size: var(--t-xs); font-weight: 600; color: var(--musgo); margin: .8rem 0 .3rem; }
+.perfil-zona h3 small { font-weight: 400; }
+.pz-cifras { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem 1rem; margin: .7rem 0 0; }
+.pz-cifras dt { font-size: var(--t-xs); color: var(--musgo); }
+.pz-cifras dd { margin: 0; font-weight: 600; color: var(--paramo); }
+.pz-barra { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr) 3rem; align-items: center; gap: .5rem; font-size: var(--t-xs); margin: .15rem 0; }
+.pz-barra b { font-weight: 600; color: var(--paramo); white-space: nowrap; }
+.pz-barra i { display: block; height: .5rem; border-radius: 99px; background: var(--musgo); opacity: .55; }
+.pz-barra em { font-style: normal; text-align: right; color: var(--musgo); }
+.pz-nada { font-size: var(--t-xs); color: var(--musgo); }
+.pz-tipos ul { list-style: none; padding: 0; margin: 0; }
+.pz-tipos li { font-size: var(--t-xs); margin: .25rem 0; display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.pz-tipos em { font-style: normal; color: var(--musgo); }
+.pz-tipo { font: inherit; background: none; border: 1px solid var(--borde-campo); border-radius: 99px; padding: .2rem .6rem; color: var(--paramo); cursor: pointer; }
+.pz-tipo:hover { border-color: var(--paramo); }
+.pz-tipo:focus-visible { outline: 2px solid var(--paramo); outline-offset: 2px; }
+
+.viabilidad { border-left: 4px solid var(--liquen); padding: .6rem .9rem; margin-bottom: 1rem; background: rgba(23, 50, 44, .04); border-radius: 0 var(--radio) var(--radio) 0; font-size: var(--t-s); }
+.viabilidad p { margin: .2rem 0; }
+.viabilidad__nivel { font-weight: 700; color: var(--paramo); display: flex; align-items: center; gap: .5rem; }
+.semaforo { width: .7rem; height: .7rem; border-radius: 50%; background: var(--liquen); flex: none; }
+.viabilidad[data-nivel="alta"] { border-color: #3F7A5C; } .viabilidad[data-nivel="alta"] .semaforo { background: #3F7A5C; }
+.viabilidad[data-nivel="media"] { border-color: var(--ambar); } .viabilidad[data-nivel="media"] .semaforo { background: var(--ambar); }
+.viabilidad[data-nivel="baja"], .viabilidad[data-nivel="insuficiente"] { border-color: var(--ladrillo); }
+.viabilidad[data-nivel="baja"] .semaforo, .viabilidad[data-nivel="insuficiente"] .semaforo { background: var(--ladrillo); }
+.viabilidad__aviso { color: #4D3608; }
+
+.explicacion h3 { font-size: var(--t-s); margin: 1.1rem 0 .35rem; color: var(--paramo); }
+.explicacion p { margin: 0 0 .4rem; font-size: var(--t-s); }
+.explica { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem 1rem; margin: 0; }
+.explica dt { font-size: var(--t-xs); color: var(--musgo); }
+.explica dd { margin: 0; font-weight: 600; color: var(--paramo); }
+.pasos { list-style: none; padding: 0; margin: 0; font-size: var(--t-s); }
+.pasos li { display: flex; justify-content: space-between; gap: 1rem; padding: .3rem 0; border-bottom: 1px solid var(--linea-suave); color: var(--musgo); }
+.pasos li.elegido { color: var(--paramo); font-weight: 600; }
+.pasos li b { white-space: nowrap; }
+.diferencias { margin: 0; padding-left: 1.1rem; font-size: var(--t-s); }
+.diferencias li { margin: .2rem 0; }
+.contraste { font-size: var(--t-s); margin: 0 0 .6rem; }
+@media (max-width: 720px) { .explica { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

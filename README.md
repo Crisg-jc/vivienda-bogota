@@ -117,6 +117,17 @@ python -m modelo.entrenar --dataset datos/dataset_v3.csv
 
 El CSV necesita al menos las columnas `precio` y `area_m2`, y debería traer `estrato` y `localidad`. Las demás (`habitaciones`, `banos`, `parqueaderos`, `antiguedad`, `barrio`, `latitud`, `longitud`, `url_origen`) se aprovechan si existen. Es el mismo formato que produce `limpieza.construir_dataset`.
 
+## Cómo se estima: comparables reales de cada zona
+
+La aplicación no aplica el mismo criterio a todas las localidades. Antes de dar un precio:
+
+1. **Muestra lo que hay en la zona** (`/api/perfil?localidad=Suba`): cuántos avisos reales hay de cada estrato, número de habitaciones, baños y parqueaderos, los tramos de área y antigüedad, precios (mediano, promedio, 80 % central), m² promedio y los tipos de apartamento más publicados. El formulario se adapta: cada botón de estrato muestra cuántos avisos hay, los que no existen en la localidad se atenúan, y bajo cada campo se ve lo común allí.
+2. **Busca comparables** (`modelo/comparables.py`) de lo más estricto a lo más amplio, y se detiene en el primer paso que reúne al menos 5: misma localidad, estrato, habitaciones y área ±20 %; luego ±1 habitación y área ±35 %; luego estrato vecino; luego las localidades vecinas (calculadas de los límites de IDECA); por último toda Bogotá. De los que cumplen, usa los 15 más parecidos (área, estrato, habitaciones, baños, parqueaderos, antigüedad y localidad). No usa avisos que el portal ya retiró.
+3. **Calcula y explica**: precio = m² mediano de los comparables × área; rango = la mitad central de sus precios por m². Muestra cuántos encontró y cuántos usó, cada búsqueda con su conteo, de qué localidades y barrios vienen, en qué se diferencian del apartamento consultado, el precio promedio y el m², y la confiabilidad con sus razones (**alta**: 10 o más comparables en búsqueda estricta y precios parecidos entre sí; **media**: 5 o más; **baja**: menos de 5 o solo con toda Bogotá).
+4. **Si no hay comparables, no hay precio**: la aplicación dice que no tiene información suficiente en lugar de inventar un valor.
+
+El modelo de aprendizaje automático (abajo) se muestra al lado como contraste: si da algo muy distinto de los comparables, lo dice.
+
 ## Cómo funciona el modelo
 
 `modelo/entrenar.py` aplica la regla de decisión del proyecto:
