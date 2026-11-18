@@ -206,8 +206,12 @@ def _diferencias(u: pd.DataFrame, datos: dict) -> list[str]:
     return salida
 
 
-def estimar(df: pd.DataFrame, datos: dict) -> dict:
-    """Busca comparables y arma el precio con su explicación. Sin comparables: precio None."""
+def estimar(df: pd.DataFrame, datos: dict, factor_minimo: float = 1.0) -> dict:
+    """Busca comparables y arma el precio con su explicación. Sin comparables: precio None.
+
+    factor_minimo: ancho mínimo del rango (precio ÷ factor a precio × factor). La app pasa el del
+    modelo (calibrado al 80 %): con 1 a 4 comparables su dispersión no dice nada de la incertidumbre
+    real, y un rango de "$2.207 M a $2.207 M" daría una precisión falsa."""
     b = buscar(df, datos)
     zona = datos.get("localidad")
     en_zona = int((df["localidad"] == zona).sum()) if zona else len(df)
@@ -226,6 +230,11 @@ def estimar(df: pd.DataFrame, datos: dict) -> dict:
     if len(u) < MINIMO:            # pocos: el rango se abre a todo lo observado
         q1, q3 = float(m2.min()), float(m2.max())
     dispersion = (q3 - q1) / med if med else 1
+    rango_ampliado = False
+    if len(u) < MINIMO and factor_minimo > 1:
+        bajo, alto = med / factor_minimo, med * factor_minimo
+        rango_ampliado = bajo < q1 or alto > q3
+        q1, q3 = min(q1, bajo), max(q3, alto)
     estricto = paso["clave"] in ("exacta", "habitaciones")
     razones = []
     if len(u) >= IDEAL and estricto and dispersion < 0.35:
@@ -260,5 +269,6 @@ def estimar(df: pd.DataFrame, datos: dict) -> dict:
             "promedio_m2": float(m2.mean()), "mediana_m2": med,
             "encontrados": int(len(b["candidatos"])), "usados": int(len(u)), "paso": paso["clave"],
             "criterio": paso["texto"], "amplio": not estricto, "considerados": considerados,
+            "rango_ampliado": rango_ampliado,
             "origen": {"localidades": origen_loc, "barrios": origen_bar},
             "diferencias": _diferencias(u, datos), "comparables": u}

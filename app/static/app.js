@@ -465,7 +465,9 @@ function pintarExplicacion(r, datos) {
       <div><dt>Confiabilidad</dt><dd>${NIVEL[c.confiabilidad].replace("Confiabilidad ", "")}</dd></div>
     </dl>
     <h3>Cómo se calculó</h3>
-    <p>Precio = m² mediano de los ${fmt.format(c.usados)} comparables (${m2(c.mediana_m2)}) × ${fmt.format(datos.area_m2)} m². El rango usa la mitad central de sus precios por m²${c.usados < 5 ? " (con tan pocos, todo lo observado)" : ""}.</p>
+    <p>Precio = m² mediano de los ${fmt.format(c.usados)} comparables (${m2(c.mediana_m2)}) × ${fmt.format(datos.area_m2)} m². ${c.rango_ampliado
+      ? `Con solo ${c.usados} comparable${c.usados === 1 ? "" : "s"} su dispersión no mide bien la incertidumbre, así que el rango se amplió al margen de error del modelo (calibrado para acertar 8 de cada 10 veces).`
+      : `El rango usa la mitad central de sus precios por m²${c.usados < 5 ? " (con tan pocos, todo lo observado)" : ""}.`}</p>
     <h3>Características tenidas en cuenta</h3><p>${esc(c.considerados.join(", "))}.</p>
     <h3>Búsquedas, de la más estricta a la más amplia</h3><ol class="pasos">${pasos}</ol>
     <h3>De dónde vienen</h3><p>Localidades: ${origen}. Barrios: ${barrios}.</p>

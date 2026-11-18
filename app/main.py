@@ -25,7 +25,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
@@ -452,7 +452,7 @@ def api_estimar(e: Entrada):
     t = time.perf_counter()
     log_api.debug("Estimar con: %s", datos)
     df = vigentes(ESTADO["df"])
-    comp = comparables.estimar(df, datos)
+    comp = comparables.estimar(df, datos, factor_minimo=math.exp(ESTADO["art"].get("q_log", 0)))
     usados = comp.pop("comparables")
     log_api.debug("Comparables: %s", {k: v for k, v in comp.items() if k not in ("diferencias", "origen")})
     res = estimar.estimar(ESTADO["art"], datos)          # efectos, advertencias y referencia del modelo
@@ -791,9 +791,30 @@ class Estaticos(StaticFiles):
 app.mount("/static", Estaticos(directory=ESTATICOS), name="static")
 
 
+VERSIONADOS = ("registro.js", "app.js", "estilos.css", "navegador-antiguo.js")
+_PAGINA: dict = {}
+
+
+def pagina_versionada() -> str:
+    """index.html con ?v=<huella> en app.js, estilos y registro: cada versión nueva de esos archivos
+    tiene otra dirección, así ningún navegador sigue usando una copia vieja guardada en caché
+    (pasó en Windows: el app.js anterior seguía activo una hora después de actualizar)."""
+    import hashlib
+    rutas = [ESTATICOS / "index.html", *(ESTATICOS / n for n in VERSIONADOS)]
+    clave = tuple(r.stat().st_mtime_ns for r in rutas)
+    if _PAGINA.get("clave") != clave:
+        html = rutas[0].read_text(encoding="utf-8")
+        for n in VERSIONADOS:
+            v = hashlib.sha256((ESTATICOS / n).read_bytes()).hexdigest()[:10]
+            html = html.replace(f'"/static/{n}"', f'"/static/{n}?v={v}"')
+        _PAGINA.update(clave=clave, html=html)
+        log.debug("Página versionada de nuevo: %s", clave)
+    return _PAGINA["html"]
+
+
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def inicio():
-    return FileResponse(ESTATICOS / "index.html", headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(pagina_versionada(), headers={"Cache-Control": "no-cache"})
 
 
 @app.exception_handler(KeyError)

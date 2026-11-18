@@ -218,3 +218,9 @@ def test_perfil_de_localidad(cliente):
     assert sum(x["n"] for x in p["estratos"]) + p["sin_dato"]["estrato"] == p["n"]
     assert c.get("/api/perfil").json()["zona"] == "Bogotá"
     assert c.get("/api/perfil", params={"localidad": "Atlantis"}).status_code == 404
+
+
+def test_pagina_con_versiones_para_no_usar_archivos_viejos(cliente):
+    c, _ = cliente
+    html = c.get("/").text
+    assert '/static/app.js?v=' in html and '/static/estilos.css?v=' in html and '/static/registro.js?v=' in html

@@ -60,3 +60,10 @@ def test_perfil_cuenta_lo_que_existe_en_la_zona():
 def test_vecinas_desde_los_limites_oficiales():
     v = cp.vecinas()
     assert "Engativá" in v["Suba"] and "Usaquén" in v["Suba"] and "Bosa" not in v["Suba"]
+
+
+def test_un_solo_comparable_no_da_un_rango_falso():
+    r = cp.estimar(avisos(SUBA[:1] + KENNEDY), {"area_m2": 70, "estrato": 4, "localidad": "Suba", "habitaciones": 3},
+                   factor_minimo=1.25)
+    assert r["usados"] == 1 and r["rango_ampliado"]
+    assert r["maximo"] / r["minimo"] > 1.5
