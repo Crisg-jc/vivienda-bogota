@@ -28,6 +28,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
     func,
 )
 
@@ -176,8 +177,13 @@ def asegurar_columnas(eng) -> list[str]:
         for col in tabla.columns:
             if col.name not in existentes:
                 tipo = col.type.compile(dialect=eng.dialect)
-                with eng.begin() as c:
-                    c.execute(text(f'ALTER TABLE {tabla.name} ADD COLUMN {col.name} {tipo}'))
+                try:
+                    with eng.begin() as c:
+                        c.execute(text(f'ALTER TABLE {tabla.name} ADD COLUMN {col.name} {tipo}'))
+                except Exception as e:      # otro proceso (app o recolector) la agregó un instante antes
+                    if "duplicate column" not in str(e).lower():
+                        raise
+                    continue
                 agregadas.append(f"{tabla.name}.{col.name}")
                 log.info("Base de datos actualizada: columna nueva %s.%s (%s)", tabla.name, col.name, tipo)
     return agregadas
@@ -188,7 +194,22 @@ def motor(url: str | None = None):
     visible = url.split("@")[-1] if "@" in url else url        # sin usuario ni clave en el registro
     log.debug("Abriendo base de datos: %s", visible)
     try:
-        eng = create_engine(url, future=True)
+        if url.startswith("sqlite"):
+            # La app, el recolector y su ciclo usan la base a la vez. Sin esto, SQLite deja escribir a
+            # uno solo y los demás fallan con "database is locked" (muy frecuente en Windows).
+            #  - WAL: los lectores no bloquean al que escribe ni al revés.
+            #  - busy_timeout 30 s: si dos escriben a la vez, el segundo espera en lugar de fallar.
+            eng = create_engine(url, future=True, connect_args={"timeout": 30})
+
+            @event.listens_for(eng, "connect")
+            def _pragmas(conexion, _):
+                cur = conexion.cursor()
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA busy_timeout=30000")
+                cur.execute("PRAGMA synchronous=NORMAL")
+                cur.close()
+        else:
+            eng = create_engine(url, future=True, pool_pre_ping=True)
         metadata.create_all(eng)
         asegurar_columnas(eng)
     except Exception:
