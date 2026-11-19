@@ -30,6 +30,12 @@ La base no crece solo cuando alguien usa la aplicación. Un proceso aparte, `pyt
 
 La sección Actualización muestra si el recolector está vivo, desde cuándo, cuántos avisos nuevos guardó y verificó en las últimas 24 h y cuánto falta, a ese ritmo, para leer los pendientes. Su registro está en `datos/registros/recolector.log`.
 
+## Pruebas y regresión
+
+- `pytest -q`: 95 pruebas. Incluyen la concurrencia de la base (tres escritores y un lector en procesos aparte), el ciclo contra un portal ficticio, la limpieza de atípicos, el m² de los vecinos sin trampa, la mezcla medida, el historial, la API y una prueba "dorada" de los comparables (`tests/golden/comparables.json`; si un cambio los mueve a propósito: `ACTUALIZAR_GOLDEN=1 pytest tests/test_golden.py` y revisar el diff).
+- `pytest tests/e2e` (necesita `pip install playwright && python -m playwright install chromium`): recorre la interfaz en un navegador real con un servidor aislado (datos sintéticos y carpetas temporales): estimación y explicación, formulario completo sin bajar a 1528×740, 1366×768 y 390×844, sin desborde horizontal, sin comparables sin precio inventado, perfil de la zona, más detalles y ubicación enviados a la API, zonas sincronizadas, avisos sin "Nan", precisión medida, comparar, modo oscuro recordado, hoja de impresión y accesibilidad con axe-core (`AXE_PATH`). Falla ante cualquier error de JavaScript o de consola.
+- CI (`.github/workflows/pruebas.yml`): pruebas en Python 3.11 a 3.13 y en Windows, compatibilidad de JavaScript y CSS con los navegadores de `.browserslistrc`, regresión en el navegador e imagen de Docker.
+
 ## Registros (logs) y diagnóstico
 
 Todo lo que pasa queda escrito, en el servidor y en el navegador:
@@ -142,6 +148,13 @@ La aplicación no aplica el mismo criterio a todas las localidades. Antes de dar
 4. **Si no hay comparables, no hay precio**: la aplicación dice que no tiene información suficiente en lugar de inventar un valor.
 
 El modelo de aprendizaje automático (abajo) se muestra al lado como contraste: si da algo muy distinto de los comparables, lo dice.
+
+## Calidad de los datos y del modelo
+
+- **Atípicos**: cada aviso cuyo m² está a más de 3,5 desviaciones robustas (MAD, sobre el logaritmo) de su localidad y estrato queda marcado con su motivo (precios con ceros de más o de menos, arriendos publicados como venta). No se borra: se ve en la lista, pero no entra al modelo, a los comparables ni a las estadísticas.
+- **Proyectos nuevos** o sobre planos se marcan; en los comparables, nuevo y usado no se mezclan si hay alternativa.
+- **Ubicación en el modelo**: además de la localidad, el m² mediano de los 10 avisos más cercanos por coordenadas (calculado sin contarse a sí mismo y dentro de cada pliegue de la validación), piso y administración.
+- **Precisión medida**: al entrenar, 400 avisos se estiman como si fueran nuevos. Por nivel de confiabilidad se mide el error de los comparables, del modelo y de su mezcla, y se fija cuánto pesa cada uno y qué ancho de rango acierta 8 de cada 10 veces. Todo eso se ve en la sección Modelo y en la explicación de cada estimación.
 
 ## Cómo funciona el modelo
 

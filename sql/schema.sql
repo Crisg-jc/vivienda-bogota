@@ -36,6 +36,7 @@ CREATE TABLE ejecuciones (
 	con_cambios INTEGER, 
 	retirados INTEGER, 
 	verificados_listado INTEGER, 
+	desde_listado INTEGER, 
 	version_dataset INTEGER, 
 	mensaje TEXT, 
 	PRIMARY KEY (id)
@@ -106,6 +107,8 @@ CREATE TABLE inmuebles_limpios (
 	longitud NUMERIC(9, 6), 
 	fecha_consulta DATE NOT NULL, 
 	publicado DATE, 
+	proyecto BOOLEAN, 
+	atipico VARCHAR(200), 
 	url_origen VARCHAR(500) NOT NULL, 
 	version_dataset INTEGER NOT NULL, 
 	PRIMARY KEY (id), 

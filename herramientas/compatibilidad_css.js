@@ -11,6 +11,8 @@ const ACEPTADAS = new Set([
   "css-backdrop-filter",   // Firefox < 103: barra sin desenfoque, igual de legible
   "css-overflow", "css-sticky", "css-marker-pseudo", "css-display-contents",
   "css-clip-path", "css-masks", "css-gradients", "extended-system-fonts",
+  "css-paged-media",       // solo la hoja de impresión: sin @page, el navegador usa sus márgenes
+  "multicolumn",           // break-inside en impresión: una tarjeta puede partirse entre páginas
 ]);
 const problemas = [];
 postcss([doiuse({ onFeatureUsage: (u) => { if (!ACEPTADAS.has(u.feature)) problemas.push(u.message); } })])
