@@ -96,6 +96,23 @@
           </div>
         </div>
 
+        <details class="mas-detalles campo--ancho" id="mas-detalles">
+          <summary>Más detalles (opcional): piso y administración</summary>
+          <div class="mas-detalles__campos">
+            <div class="campo">
+              <label for="piso" class="contador__etiqueta">Piso</label>
+              <input id="piso" class="campo-corto" name="piso" type="number" inputmode="numeric" min="1" max="60" step="1" placeholder="Sin dato">
+            </div>
+            <div class="campo">
+              <label for="administracion" class="contador__etiqueta">Administración mensual</label>
+              <div class="con-sufijo">
+                <input id="administracion" name="administracion" type="number" inputmode="numeric" min="0" max="10000000" step="10000" placeholder="Sin dato">
+                <span>$</span>
+              </div>
+            </div>
+          </div>
+        </details>
+
         <p class="formulario__nota" id="nota-form">
           <span class="pulso" aria-hidden="true"></span>
           El precio se actualiza mientras cambia los datos.
@@ -360,6 +377,7 @@
           </div>
         </div>
       </div>
+      <div class="contenedor precision" id="mo-precision"></div>
     </section>
   </main>
 

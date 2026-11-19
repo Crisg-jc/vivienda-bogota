@@ -38,6 +38,7 @@ from sklearn.tree import DecisionTreeRegressor
 
 from . import datos as D
 from .linea_base import LineaBase
+from .vecinos import VecinosM2
 
 log = logging.getLogger("vivienda.modelo")
 
@@ -48,11 +49,12 @@ SEMILLA = 42
 NIVEL_RANGO = 0.80          # el rango de precio debe contener el valor real 8 de cada 10 veces
 MINIMO_AVISOS = 12
 # Se sube cuando cambia la forma de entrenar o de predecir: la app reentrena sola los modelos viejos.
-VERSION_MODELO = 2
+VERSION_MODELO = 3
 
 
 def preparar(df: pd.DataFrame) -> pd.DataFrame:
-    X = pd.DataFrame({c: pd.to_numeric(df.get(c), errors="coerce").astype(float) for c in D.NUMERICAS})
+    X = pd.DataFrame({c: pd.to_numeric(df.get(c), errors="coerce").astype(float)
+                      for c in D.NUMERICAS + D.COORDENADAS})
     X["localidad"] = df.get("localidad").astype(object).where(df.get("localidad").notna(), "Sin dato").astype(str)
     return X
 
@@ -61,6 +63,9 @@ def arbol(regresor) -> TransformedTargetRegressor:
     pre = ColumnTransformer([
         ("num", SimpleImputer(strategy="median", keep_empty_features=True), D.NUMERICAS),
         ("loc", OneHotEncoder(handle_unknown="ignore", sparse_output=False), D.CATEGORICAS),
+        # m² de los vecinos por coordenadas: resume la ubicación mejor que la localidad sola
+        ("vec", Pipeline([("knn", VecinosM2(k=10)), ("imp", SimpleImputer(strategy="median", keep_empty_features=True))]),
+         D.COORDENADAS + ["area_m2"]),
     ])
     return TransformedTargetRegressor(Pipeline([("pre", pre), ("reg", regresor)]),
                                       func=np.log, inverse_func=np.exp)
@@ -123,9 +128,10 @@ def referencia(X: pd.DataFrame) -> dict:
 
 def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     t0 = time.perf_counter()
-    df = D.cargar(ruta)
+    todos = D.cargar(ruta)
+    df = D.utiles(todos)          # los atípicos marcados en la limpieza no enseñan nada bueno
     n = len(df)
-    log.info("Entrenamiento con %s (%s): %d avisos", ruta.name, tipo, n)
+    log.info("Entrenamiento con %s (%s): %d avisos (%d atípicos fuera)", ruta.name, tipo, n, len(todos) - n)
     if n < MINIMO_AVISOS:
         log.warning("%s tiene %d avisos válidos; se necesitan al menos %d", ruta.name, n, MINIMO_AVISOS)
         raise SystemExit(f"{ruta.name} tiene {n} avisos válidos; se necesitan al menos {MINIMO_AVISOS}.")
@@ -155,7 +161,14 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     log.info("Prueba final: %s", prueba)
 
     final = clone(elegido).fit(X, y)
-    q, esperados = cuantil_conformal(elegido, X, y, con_predicciones=True)
+    q, oof = cuantil_conformal(elegido, X, y, con_predicciones=True)
+    # Precio esperado de TODOS los avisos del dataset, en su orden: los útiles con su predicción fuera
+    # de muestra; los atípicos (que el modelo no vio) con el modelo final.
+    esperados = pd.Series(np.nan, index=todos.index)
+    esperados.loc[df.index] = oof
+    if len(todos) > n:
+        esperados.loc[todos.index.difference(df.index)] = final.predict(preparar(todos.drop(df.index)))
+    por_localidad = error_por_zona(df, oof)
 
     metricas = {
         "fecha": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -170,7 +183,14 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
                   "factor": round(math.exp(q), 3)},
         "variables": D.VARIABLES,
         "dominio": dominio(df, X),
+        "por_localidad": por_localidad,
+        "atipicos_excluidos": int(len(todos) - n),
     }
+    try:
+        from . import precision
+        metricas["precision"] = precision.evaluar(df, oof, q)
+    except Exception:
+        log.exception("No se pudo medir la precisión de los comparables; se sigue sin ella")
     ARTEFACTOS.mkdir(exist_ok=True)
     joblib.dump({"modelo": final, "nombre": mejor["modelo"], "q_log": q, "referencia": referencia(X),
                  "esperados": [round(float(v)) for v in esperados],
@@ -183,6 +203,17 @@ def entrenar(ruta: pathlib.Path, tipo: str) -> dict:
     if not metricas["supera_linea_base"]:
         log.warning("El modelo elegido NO supera a la línea base: los datos todavía no alcanzan para aprender bien")
     return metricas
+
+
+def error_por_zona(df: pd.DataFrame, oof) -> list[dict]:
+    """Error del modelo en cada localidad, con predicciones fuera de muestra (mediana del error %)."""
+    e = pd.DataFrame({"localidad": df["localidad"].values,
+                      "error": np.abs(np.asarray(oof) / df[D.OBJETIVO].to_numpy() - 1)})
+    salida = []
+    for loc, g in e.dropna(subset=["localidad"]).groupby("localidad"):
+        if len(g) >= 5:
+            salida.append({"localidad": loc, "n": int(len(g)), "error_mediano": round(float(g["error"].median()), 4)})
+    return sorted(salida, key=lambda r: r["error_mediano"])
 
 
 def registrar_mlflow(m: dict) -> None:

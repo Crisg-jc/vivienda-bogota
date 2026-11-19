@@ -34,7 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from comun import registro
 from comun.registro import cronometro
 from limpieza.normalizar import LOCALIDADES
-from modelo import comparables, demo, entrenar, estimar
+from modelo import comparables, demo, entrenar, estimar, precision
 from modelo import datos as D
 from scraper import db
 
@@ -152,9 +152,9 @@ def preparar_estado() -> None:
     with cronometro(log, "Leer métricas del modelo", logging.DEBUG):
         nuevo["metricas"] = json.loads(entrenar.METRICAS.read_text(encoding="utf-8"))
     with cronometro(log, "Calcular resúmenes de mercado", logging.DEBUG):
-        nuevo["mercado"] = calcular_mercado(df)
+        nuevo["mercado"] = calcular_mercado(D.utiles(df))
     with cronometro(log, "Calcular estadísticas por zona", logging.DEBUG):
-        nuevo["zonas"] = calcular_zonas(df, art)
+        nuevo["zonas"] = calcular_zonas(D.utiles(df), art)
     sin_loc = [z["nombre"] for z in nuevo["zonas"]["localidades"] if not z["n"]]
     if sin_loc:
         log.info("Localidades sin avisos en este dataset: %s", ", ".join(sin_loc))
@@ -368,7 +368,9 @@ def url_segura(u) -> str | None:
 def aviso(r) -> dict:
     d = {k: limpio(r.get(k)) for k in ["precio", "area_m2", "precio_m2", "habitaciones", "banos", "estrato",
                                        "parqueaderos", "antiguedad", "localidad", "barrio", "precio_esperado",
-                                       "diferencia_pct", "comparacion", "precio_anterior", "latitud", "longitud"]}
+                                       "diferencia_pct", "comparacion", "precio_anterior", "latitud", "longitud",
+                                       "atipico", "piso", "administracion"]}
+    d["proyecto"] = bool(r.get("proyecto")) if r.get("proyecto") is not None and not pd.isna(r.get("proyecto")) else None
     d["url_origen"] = url_segura(r.get("url_origen"))
     # Trazabilidad en vivo: fuente, publicación, primera vez visto, última verificación y último cambio.
     t = TRAZA["por_url"].get(r.get("url_origen"))
@@ -432,6 +434,11 @@ class Entrada(BaseModel):
     banos: int | None = Field(default=None, ge=0, le=10)
     parqueaderos: int | None = Field(default=None, ge=0, le=10)
     antiguedad: int | None = Field(default=None, ge=0, le=100)
+    piso: int | None = Field(default=None, ge=1, le=60)
+    administracion: int | None = Field(default=None, ge=0, le=10_000_000)
+    # Punto del mapa (lo que el usuario tocó o el centro de la localidad): da el m² de los vecinos
+    latitud: float | None = Field(default=None, ge=4.4, le=4.9)
+    longitud: float | None = Field(default=None, ge=-74.3, le=-73.9)
 
     @field_validator("localidad")
     @classmethod
@@ -451,7 +458,8 @@ def api_estimar(e: Entrada):
     datos = e.model_dump()
     t = time.perf_counter()
     log_api.debug("Estimar con: %s", datos)
-    df = vigentes(ESTADO["df"])
+    datos["proyecto"] = 1.0 if e.antiguedad == 0 else (0.0 if e.antiguedad is not None else None)
+    df = para_comparar(ESTADO["df"])
     comp = comparables.estimar(df, datos, factor_minimo=math.exp(ESTADO["art"].get("q_log", 0)))
     usados = comp.pop("comparables")
     log_api.debug("Comparables: %s", {k: v for k, v in comp.items() if k not in ("diferencias", "origen")})
@@ -459,7 +467,13 @@ def api_estimar(e: Entrada):
     modelo = {"nombre": ESTADO["art"]["nombre"], "precio": res["precio"], "minimo": res["minimo"],
               "maximo": res["maximo"], "precio_m2": res["precio_m2"]}
     if comp["viable"]:
-        res.update(precio=comp["precio"], minimo=comp["minimo"], maximo=comp["maximo"], precio_m2=comp["precio_m2"])
+        # Mezcla medida con avisos reales (modelo/precision.py): según el nivel de confiabilidad, cuánto
+        # pesan los comparables y cuánto el modelo, y qué ancho de rango acierta 8 de cada 10 veces.
+        mezcla = precision.combinar(ESTADO["metricas"].get("precision"), comp["confiabilidad"], comp["precio"],
+                                    modelo["precio"], math.exp(ESTADO["art"]["q_log"]))
+        res.update(precio=mezcla["precio"], minimo=mezcla["minimo"], maximo=mezcla["maximo"],
+                   precio_m2=round(mezcla["precio"] / e.area_m2, -3))
+        comp["mezcla"] = mezcla
         modelo["diferencia_pct"] = modelo["precio"] / comp["precio"] - 1 if comp["precio"] else None
     else:
         res.update(precio=None, minimo=None, maximo=None, precio_m2=None)
@@ -497,6 +511,11 @@ def api_estimar(e: Entrada):
     return res
 
 
+def para_comparar(df: pd.DataFrame) -> pd.DataFrame:
+    """Avisos que sirven de comparables: publicados todavía y no marcados como atípicos."""
+    return D.utiles(vigentes(df))
+
+
 def vigentes(df: pd.DataFrame) -> pd.DataFrame:
     """Sin los avisos que el portal ya retiró (la base lo sabe antes que el corte del dataset)."""
     retirados = {u for u, t in TRAZA["por_url"].items() if not t["disponible"]}
@@ -516,7 +535,7 @@ def api_perfil(localidad: str | None = None):
     if clave not in _PERFILES:
         if len(_PERFILES) > 60:
             _PERFILES.clear()
-        _PERFILES[clave] = comparables.perfil(vigentes(ESTADO["df"]), localidad)
+        _PERFILES[clave] = comparables.perfil(para_comparar(ESTADO["df"]), localidad)
         log_api.debug("Perfil calculado para %s: %d avisos", localidad or "Bogotá", _PERFILES[clave]["n"])
     return _PERFILES[clave]
 

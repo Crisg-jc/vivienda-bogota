@@ -22,6 +22,7 @@ import logging
 import pathlib
 from collections import Counter
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import insert, or_, select
 
@@ -45,7 +46,7 @@ REGLAS = {
 COLUMNAS = ["precio", "area_m2", "habitaciones", "banos", "estrato", "parqueaderos",
             "localidad", "barrio", "antiguedad", "administracion",
             "piso", "estado", "latitud", "longitud",
-            "portal", "fecha_consulta", "publicado", "url_origen", "crudo_id"]
+            "portal", "fecha_consulta", "publicado", "proyecto", "atipico", "url_origen", "crudo_id"]
 
 
 def admin_valida(admin: int | None, precio: int) -> int | None:
@@ -118,9 +119,60 @@ def normalizar_crudos(crudos: pd.DataFrame) -> tuple[pd.DataFrame, Counter]:
             "longitud": lon,
             "portal": r.portal, "fecha_consulta": r.fecha_consulta,
             "publicado": nz.fecha(getattr(r, "publicado_txt", None)),
+            # Proyectos sobre planos o para estrenar se venden distinto que los usados: se marcan.
+            "proyecto": bool("proyecto" in nz.simple(r.tipo_txt) or nz.estado(r.estado_txt) == "nuevo"),
+            "atipico": None,
             "url_origen": r.url_origen, "crudo_id": r.id,
         })
     return pd.DataFrame(filas, columns=COLUMNAS), descartes
+
+
+Z_ATIPICO = 3.5       # desviaciones robustas (MAD) del log del m² en su grupo
+MINIMO_GRUPO = 8
+
+
+def marcar_atipicos(df: pd.DataFrame) -> tuple[pd.DataFrame, Counter]:
+    """Marca (sin borrar) los avisos cuyo precio por m² está muy lejos de los de su misma localidad y
+    estrato: precios con ceros de más o de menos, arriendos publicados como venta, áreas mal
+    digitadas. Se usa la mediana y la desviación absoluta mediana del log del m², que no se dejan
+    arrastrar por los mismos atípicos. Con menos de 8 avisos en el grupo se compara con el estrato
+    en toda Bogotá. Los marcados quedan en el dataset y en la lista de avisos (con su motivo), pero
+    no entran al modelo, a los comparables ni a las estadísticas de zona."""
+    df = df.copy()
+    motivos = Counter()
+    if df.empty:
+        return df, motivos
+    lm2 = np.log(df["precio"].astype(float) / df["area_m2"].astype(float))
+    marca = pd.Series([None] * len(df), index=df.index, dtype=object)
+
+    def revisar(grupo_idx, nombre):
+        v = lm2.loc[grupo_idx]
+        med = v.median()
+        mad = 1.4826 * (v - med).abs().median()
+        if not mad or np.isnan(mad):
+            return
+        z = (v - med) / max(mad, 0.05)
+        for i in z.index[z.abs() > Z_ATIPICO]:
+            if marca.at[i] is None:
+                lado = "alto" if z.at[i] > 0 else "bajo"
+                marca.at[i] = f"m² muy {lado} para {nombre} (×{np.exp(v.at[i] - med):.1f} la mediana)"
+    hechos = set()
+    for (loc, est), g in df.groupby(["localidad", "estrato"], dropna=True):
+        if len(g) >= MINIMO_GRUPO:
+            revisar(g.index, f"estrato {int(est)} en {loc}")
+            hechos.update(g.index)
+    for est, g in df.groupby("estrato", dropna=True):
+        resto = g.index.difference(list(hechos))
+        if len(g) >= MINIMO_GRUPO and len(resto):
+            revisar(g.index, f"estrato {int(est)} en Bogotá")
+    df["atipico"] = marca
+    for m in marca.dropna():
+        motivos["m² muy alto" if "muy alto" in m else "m² muy bajo"] += 1
+    if motivos:
+        log.info("Avisos atípicos marcados (no se borran): %s", dict(motivos))
+        for i in marca.dropna().index[:50]:
+            log.debug("Atípico: %s — %s", df.at[i, "url_origen"], marca.at[i])
+    return df, motivos
 
 
 def deduplicar(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -228,6 +280,10 @@ def construir(notas: str = "", solo_si_cambia: bool = False, eng=None, conservar
     log.info("Normalización: %d válidos de %d. Motivos: %s", len(df), len(crudos), dict(descartes))
     df, n_dup = deduplicar(df)
     log.info("Duplicados quitados: %d; quedan %d", n_dup, len(df))
+    df, atipicos = marcar_atipicos(df)
+    for k, v in atipicos.items():
+        descartes[f"(marcado, no borrado) {k}"] = v
+    log.info("Proyectos nuevos o sobre planos: %d", int(df["proyecto"].sum()) if len(df) else 0)
     vacios = {c: int(n) for c, n in df.isna().sum().items() if n}
     log.info("Campos vacíos en el dataset limpio: %s", vacios)
     suma = checksum(df)

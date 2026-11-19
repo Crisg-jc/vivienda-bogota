@@ -159,10 +159,10 @@ def test_explicacion_en_lote_igual_a_predicciones_separadas(cliente):
 def test_inferencia_en_un_solo_hilo():
     import pandas as pd
 
+    from modelo import datos as D
     from modelo import entrenar as E
     from modelo import estimar as ES
-    X = pd.DataFrame({c: [1.0, 2.0, 3.0, 4.0] for c in ["area_m2", "habitaciones", "banos", "estrato",
-                                                         "parqueaderos", "antiguedad"]})
+    X = pd.DataFrame({c: [1.0, 2.0, 3.0, 4.0] for c in D.NUMERICAS + D.COORDENADAS})
     X["localidad"] = ["A", "B", "A", "B"]
     m = E.candidatos(40)["Bosque aleatorio"].fit(X, [1e8, 2e8, 3e8, 4e8])
     ES.un_hilo(m)
@@ -224,3 +224,16 @@ def test_pagina_con_versiones_para_no_usar_archivos_viejos(cliente):
     c, _ = cliente
     html = c.get("/").text
     assert '/static/app.js?v=' in html and '/static/estilos.css?v=' in html and '/static/registro.js?v=' in html
+
+
+def test_estimacion_mezcla_medida_y_precision_publicada(cliente):
+    c, _ = cliente
+    d = c.post("/api/estimar", json={"area_m2": 70, "estrato": 4, "localidad": "Suba", "habitaciones": 3,
+                                     "latitud": 4.74, "longitud": -74.08, "piso": 5, "administracion": 350000}).json()
+    m = d["comparables"]["mezcla"]
+    assert 0 <= m["peso_comparables"] <= 1 and d["minimo"] < d["precio"] < d["maximo"]
+    assert m["pruebas"] >= 0
+    met = c.get("/api/modelo").json()
+    assert met["precision"]["muestra"] > 0 and met["precision"]["niveles"]
+    assert met["por_localidad"] and "piso" in met["variables"]
+    assert c.post("/api/estimar", json={"area_m2": 70, "estrato": 4, "latitud": 10.0}).status_code == 422

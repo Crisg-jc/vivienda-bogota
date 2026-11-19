@@ -101,6 +101,8 @@ inmuebles_limpios = Table(
     Column("longitud", Numeric(9, 6)),
     Column("fecha_consulta", Date, nullable=False),
     Column("publicado", Date),
+    Column("proyecto", Boolean),
+    Column("atipico", String(200)),       # motivo si el m² está muy fuera de su zona y estrato
     Column("url_origen", String(500), nullable=False),
     Column("version_dataset", Integer, ForeignKey("dataset_versiones.version"), nullable=False),
     # Un aviso crudo aparece una sola vez por versión del dataset.

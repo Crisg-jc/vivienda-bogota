@@ -21,9 +21,13 @@ RAIZ = pathlib.Path(__file__).resolve().parents[1]
 DEMO = RAIZ / "datos" / "demo" / "dataset_demo.csv"
 log = logging.getLogger("vivienda.datos")
 
-NUMERICAS = ["area_m2", "habitaciones", "banos", "estrato", "parqueaderos", "antiguedad"]
+NUMERICAS = ["area_m2", "habitaciones", "banos", "estrato", "parqueaderos", "antiguedad", "piso",
+             "administracion", "proyecto"]
+COORDENADAS = ["latitud", "longitud"]      # entran al modelo por el m² de los vecinos (modelo/vecinos.py)
 CATEGORICAS = ["localidad"]
-VARIABLES = NUMERICAS + CATEGORICAS
+VARIABLES = NUMERICAS + COORDENADAS + CATEGORICAS
+# Las que se explican en "qué mueve el precio": las coordenadas se explican a través de la localidad
+EXPLICABLES = [v for v in NUMERICAS if v != "proyecto"] + CATEGORICAS
 OBJETIVO = "precio"
 
 
@@ -67,14 +71,19 @@ def cargar(ruta: pathlib.Path) -> pd.DataFrame:
     if faltan:
         log.error("%s no tiene las columnas obligatorias %s", ruta.name, faltan)
         raise SystemExit(f"{ruta.name} no tiene las columnas {faltan}.")
-    for c in NUMERICAS + [OBJETIVO, "latitud", "longitud", "administracion"]:
+    for c in [x for x in NUMERICAS if x != "proyecto"] + [OBJETIVO, "latitud", "longitud"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
         else:
-            df[c] = pd.NA
-    for c in ["localidad", "barrio", "url_origen", "portal"]:
+            df[c] = float("nan")
+    for c in ["localidad", "barrio", "url_origen", "portal", "atipico"]:
         if c not in df.columns:
             df[c] = None
+    df["atipico"] = df["atipico"].where(df["atipico"].notna() & (df["atipico"].astype(str) != ""), None)
+    if "proyecto" in df.columns and df["proyecto"].notna().any():
+        df["proyecto"] = df["proyecto"].map(lambda v: 1.0 if str(v).strip().lower() in ("true", "1", "1.0") else 0.0)
+    else:      # cortes anteriores sin la marca: 0 años de antigüedad = para estrenar
+        df["proyecto"] = (df["antiguedad"] == 0).astype(float)
     # Mismas reglas mínimas de limpieza/construir_dataset: un registro sin precio o área no sirve.
     antes = len(df)
     df = df[df[OBJETIVO].gt(0) & df["area_m2"].gt(0)].copy()
@@ -82,3 +91,8 @@ def cargar(ruta: pathlib.Path) -> pd.DataFrame:
         log.info("%s: %d filas sin precio o sin área se dejan fuera", ruta.name, antes - len(df))
     df["precio_m2"] = df[OBJETIVO] / df["area_m2"]
     return df.reset_index(drop=True)
+
+
+def utiles(df: pd.DataFrame) -> pd.DataFrame:
+    """Avisos que sirven para aprender y comparar: sin los marcados como atípicos en la limpieza."""
+    return df[df["atipico"].isna()] if "atipico" in df.columns else df

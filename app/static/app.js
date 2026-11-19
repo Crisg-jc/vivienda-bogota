@@ -217,7 +217,7 @@ async function refrescarTodo() {
 let estratoElegido = 4;
 
 // La estimación vive en la URL (?area=70&estrato=4…): se puede guardar, compartir y volver a ella.
-const CAMPOS_URL = ["area", "estrato", "localidad", "habitaciones", "banos", "parqueaderos", "antiguedad"];
+const CAMPOS_URL = ["area", "estrato", "localidad", "habitaciones", "banos", "parqueaderos", "antiguedad", "piso", "administracion"];
 let interactuo = false;   // false = el precio en pantalla es el ejemplo inicial, no el apartamento del usuario
 
 function leerURL() {
@@ -226,11 +226,15 @@ function leerURL() {
   const d = {
     area: entero("area", 15, 1000), estrato: entero("estrato", 1, 6), habitaciones: entero("habitaciones", 0, 8),
     banos: entero("banos", 0, 8), parqueaderos: entero("parqueaderos", 0, 6), antiguedad: entero("antiguedad", 0, 100),
+    piso: entero("piso", 1, 60), administracion: entero("administracion", 0, 10000000),
     localidad: ESTADO.localidades.includes(q.get("localidad")) ? q.get("localidad") : null,
   };
   if (d.area != null) { $("#area").value = d.area; $("#area-rango").value = d.area; }
   if (d.localidad) $("#localidad").value = d.localidad;
   if (d.antiguedad != null) $("#antiguedad").value = d.antiguedad;
+  if (d.piso != null) $("#piso").value = d.piso;
+  if (d.administracion != null) $("#administracion").value = d.administracion;
+  if (d.piso != null || d.administracion != null) $("#mas-detalles").open = true;
   for (const n of ["habitaciones", "banos", "parqueaderos"]) {
     if (d[n] != null) document.querySelector(`.contador[data-nombre=${n}]`).dataset.valor = d[n];
   }
@@ -289,6 +293,8 @@ function construirFormulario(ref) {
   rango.addEventListener("input", () => { caja.value = rango.value; programar(); });
   $("#localidad").addEventListener("change", () => { cargarPerfil($("#localidad").value || null); programar(); });
   $("#antiguedad").addEventListener("input", programar);
+  $("#piso").addEventListener("input", programar);
+  $("#administracion").addEventListener("input", programar);
   $("#formulario").addEventListener("submit", (e) => { e.preventDefault(); estimarAhora(); });
 }
 
@@ -400,7 +406,19 @@ function leerFormulario() {
     localidad: $("#localidad").value || null,
     habitaciones: contador("habitaciones"), banos: contador("banos"), parqueaderos: contador("parqueaderos"),
     antiguedad: num($("#antiguedad").value),
+    piso: num($("#piso").value), administracion: num($("#administracion").value),
+    ...ubicacionElegida($("#localidad").value || null),
   };
+}
+
+// Punto que se usa para el m² de los vecinos: el que el usuario tocó en el mapa (si sigue en la misma
+// localidad) o el centro aproximado de la localidad. Sin localidad, ninguno.
+function ubicacionElegida(localidad) {
+  if (typeof MINI !== "undefined" && MINI.punto && MINI.nombrePunto === localidad) {
+    return { latitud: +MINI.punto.lat.toFixed(5), longitud: +MINI.punto.lng.toFixed(5) };
+  }
+  const c = localidad && CENTROS[localidad];
+  return c ? { latitud: c[0], longitud: c[1] } : {};
 }
 
 let ultimaPeticion = 0;
@@ -445,6 +463,18 @@ function pintarViabilidad(r, datos) {
     ${c.viable ? "" : `<p>${esc(c.razones[0])}</p><p>Pruebe con características más comunes en ${esc(zona)} (vea "Lo que hay en ${esc(zona)}" en el formulario) o sin localidad.</p>`}`;
 }
 
+function mezclaTexto(c, r) {
+  const m = c.mezcla;
+  if (!m) return "";
+  const pc = Math.round(m.peso_comparables * 100);
+  const como = pc === 100 ? "solo de los comparables" : pc === 0 ? "solo del modelo (aquí los comparables acertaron menos)"
+    : `${pc} % de los comparables y ${100 - pc} % del modelo`;
+  const prueba = m.calibrado
+    ? `Así se fijó porque, en una prueba con ${fmt.format(m.pruebas)} avisos reales de confiabilidad ${esc(c.confiabilidad)} estimados como si fueran nuevos, esa mezcla fue la que menos falló (error mediano ${fmt1.format((m.error_tipico || 0) * 100)} %). El rango ${corto(r.minimo)} a ${corto(r.maximo)} es el que en esa prueba contuvo el precio real 8 de cada 10 veces.`
+    : `Todavía no hay suficientes pruebas con avisos reales de confiabilidad ${esc(c.confiabilidad)} para medir la mejor mezcla; se usa una por defecto y el rango del modelo${c.confiabilidad === "baja" ? ", ampliado" : ""}.`;
+  return `<p>Precio final = ${como}: ${corto(r.precio)}. ${prueba}</p>`;
+}
+
 function pintarExplicacion(r, datos) {
   const c = r.comparables, caja = $("#r-explicacion");
   const pasos = c.pasos.map((p, i) => `<li${p.clave === c.paso ? ' class="elegido"' : ""}><span>${i + 1}. Buscar ${esc(p.criterio)}</span><b>${fmt.format(p.encontrados)}</b></li>`).join("");
@@ -461,11 +491,12 @@ function pintarExplicacion(r, datos) {
       <div><dt>Usados como referencia</dt><dd>${fmt.format(c.usados)}</dd></div>
       <div><dt>Precio promedio de los comparables</dt><dd>${corto(c.promedio_precio)}</dd></div>
       <div><dt>m² promedio · mediano</dt><dd>${m2(c.promedio_m2)} · ${m2(c.mediana_m2)}</dd></div>
-      <div><dt>Rango razonable</dt><dd>${corto(c.minimo)} a ${corto(c.maximo)}</dd></div>
+      <div><dt>Rango razonable</dt><dd>${corto(r.minimo)} a ${corto(r.maximo)}</dd></div>
       <div><dt>Confiabilidad</dt><dd>${NIVEL[c.confiabilidad].replace("Confiabilidad ", "")}</dd></div>
     </dl>
     <h3>Cómo se calculó</h3>
-    <p>Precio = m² mediano de los ${fmt.format(c.usados)} comparables (${m2(c.mediana_m2)}) × ${fmt.format(datos.area_m2)} m². ${c.rango_ampliado
+    ${mezclaTexto(c, r)}
+    <p>Los comparables solos darían ${corto(c.precio)}: m² mediano de los ${fmt.format(c.usados)} (${m2(c.mediana_m2)}) × ${fmt.format(datos.area_m2)} m². ${c.rango_ampliado
       ? `Con solo ${c.usados} comparable${c.usados === 1 ? "" : "s"} su dispersión no mide bien la incertidumbre, así que el rango se amplió al margen de error del modelo (calibrado para acertar 8 de cada 10 veces).`
       : `El rango usa la mitad central de sus precios por m²${c.usados < 5 ? " (con tan pocos, todo lo observado)" : ""}.`}</p>
     <h3>Características tenidas en cuenta</h3><p>${esc(c.considerados.join(", "))}.</p>
@@ -1267,6 +1298,12 @@ function pintarAvisoFuente(a) {
   $("#aviso-fuente-texto").textContent = texto;
 }
 
+// Marcas de la limpieza: atípico (no entra a cálculos) y proyecto nuevo.
+function marcas(a) {
+  return `${a.atipico ? ` <span class="marca marca--atipico" title="${esc(a.atipico)}. Se muestra, pero no entra al modelo, a los comparables ni a las estadísticas.">atípico</span>` : ""}${
+    a.proyecto ? ` <span class="marca" title="Proyecto nuevo o para estrenar">nuevo</span>` : ""}`;
+}
+
 // ---------------------------------------------------------------- avisos
 let paginaActual = 1;
 async function cargarAvisos() {
@@ -1281,7 +1318,7 @@ async function cargarAvisos() {
   $("#a-filas").innerHTML = r.avisos.map((a) => `<tr>
       <td>${corto(a.precio)}${precioAnterior(a)}</td><td>${chipComparacion(a)}</td><td>${m2(a.precio_m2)}</td><td>${area(a.area_m2)}</td>
       <td>${a.habitaciones ?? "—"}</td><td>${a.banos ?? "—"}</td><td>${chipEstrato(a.estrato)}</td>
-      <td>${esc(a.localidad ?? "—")}</td><td>${esc(a.barrio ?? "—")}</td><td>${celdaFuente(a)}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
+      <td>${esc(a.localidad ?? "—")}${marcas(a)}</td><td>${esc(a.barrio ?? "—")}</td><td>${celdaFuente(a)}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
   $("#a-pagina").textContent = `Página ${r.pagina} de ${paginas}`;
   $("#a-limpiar").hidden = !["localidad", "estrato", "precio_max", "area_min", "comparacion"].some((k) => f.get(k));
   $("#a-anterior").disabled = r.pagina <= 1;
@@ -1323,6 +1360,32 @@ async function cargarModelo() {
   ];
   if (elegido !== "Línea base" && base) filas.splice(2, 0, ["Línea base en la misma prueba", corto(base.mae)]);
   $("#mo-prueba").innerHTML = filas.map(([k, v, c]) => `<div${c ? ` class="${c}"` : ""}><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  pintarPrecision(m);
+}
+
+// ¿Cuánto aciertan de verdad? Prueba con avisos reales estimados como si fueran nuevos.
+function pintarPrecision(m) {
+  const pr = m.precision, caja = $("#mo-precision");
+  if (!pr || !pr.muestra) { caja.innerHTML = ""; return; }
+  const pct = (v) => (v == null ? "—" : `${fmt1.format(v * 100)} %`);
+  const orden = ["alta", "media", "baja", "insuficiente"].filter((k) => pr.niveles[k]);
+  const filas = orden.map((k) => {
+    const n = pr.niveles[k];
+    return `<tr><td>${NIVEL[k]}</td><td class="num">${fmt.format(n.n)}</td><td class="num">${pct(n.error_comparables)}</td>
+      <td class="num">${pct(n.error_modelo)}</td><td class="num">${pct(n.error_mezcla)}</td>
+      <td class="num">${n.peso_comparables == null ? "—" : `${Math.round(n.peso_comparables * 100)} %`}</td>
+      <td class="num">${pct(n.cobertura_rango_comparables)}</td></tr>`;
+  }).join("");
+  const loc = (m.por_localidad || []).map((z) => `<tr><td>${esc(z.localidad)}</td><td class="num">${fmt.format(z.n)}</td><td class="num">${pct(z.error_mediano)}</td></tr>`).join("");
+  caja.innerHTML = `
+    <h3>¿Cuánto aciertan de verdad?</h3>
+    <p class="como-leer">${esc(pr.metodo)} Muestra: ${fmt.format(pr.muestra)} avisos. Si la confiabilidad funciona, el error debería bajar de "baja" a "alta".</p>
+    <div class="desliza" tabindex="0" role="region" aria-label="Precisión por nivel de confiabilidad"><table class="tabla">
+      <thead><tr><th>Nivel</th><th class="num">Pruebas</th><th class="num">Error comparables</th><th class="num">Error modelo</th><th class="num">Error mezcla</th><th class="num">Peso comparables</th><th class="num">Acierto del rango de solo comparables</th></tr></thead>
+      <tbody>${filas}</tbody></table></div>
+    ${loc ? `<details class="precision__zonas"><summary>Error del modelo por localidad</summary><p class="como-leer">Mediana del error con avisos que el modelo no vio. Solo localidades con 5 avisos o más.</p>
+    <div class="desliza" tabindex="0" role="region" aria-label="Error por localidad"><table class="tabla"><thead><tr><th>Localidad</th><th class="num">Avisos</th><th class="num">Error mediano</th></tr></thead><tbody>${loc}</tbody></table></div></details>` : ""}
+    ${m.atipicos_excluidos ? `<p class="como-leer">${fmt.format(m.atipicos_excluidos)} avisos marcados como atípicos en la limpieza no entraron al entrenamiento.</p>` : ""}`;
 }
 
 // ---------------------------------------------------------------- navegación y precio flotante

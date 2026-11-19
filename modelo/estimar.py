@@ -11,7 +11,8 @@ from .entrenar import MODELO, preparar
 
 log = logging.getLogger("vivienda.estimar")
 NOMBRES = {"area_m2": "Área", "habitaciones": "Habitaciones", "banos": "Baños", "estrato": "Estrato",
-           "parqueaderos": "Parqueaderos", "antiguedad": "Antigüedad", "localidad": "Localidad"}
+           "parqueaderos": "Parqueaderos", "antiguedad": "Antigüedad", "localidad": "Localidad",
+           "piso": "Piso", "administracion": "Administración"}
 
 
 def cargar_modelo() -> dict | None:
@@ -59,6 +60,10 @@ def _valor_legible(var: str, v) -> str:
         return f"{v:.0f} m²"
     if var == "antiguedad":
         return f"{v:.0f} años"
+    if var == "administracion":
+        return f"${v / 1000:,.0f} mil".replace(",", ".")
+    if var == "piso":
+        return f"piso {v:.0f}"
     if var == "localidad":
         return str(v)
     return f"{v:.0f}"
@@ -72,7 +77,7 @@ def estimar(art: dict, datos: dict) -> dict:
     # apartamento típico del dataset. No es una descomposición exacta (los efectos se combinan),
     # pero responde la pregunta práctica: "¿qué está subiendo o bajando este precio?".
     # La fila original y sus variantes van en UNA sola predicción (antes eran hasta 8 llamadas).
-    variantes = [var for var in D.VARIABLES
+    variantes = [var for var in D.EXPLICABLES
                  if var in ref and datos.get(var) is not None and X.at[0, var] != ref[var]]
     lote = pd.concat([X] * (1 + len(variantes)), ignore_index=True)
     for i, var in enumerate(variantes, start=1):

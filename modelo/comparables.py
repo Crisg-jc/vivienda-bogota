@@ -155,6 +155,11 @@ def _distancia(c: pd.DataFrame, datos: dict) -> pd.Series:
             d += (c[col] - datos[col]).abs().fillna(1.5) * peso
     if datos.get("antiguedad") is not None:
         d += ((c["antiguedad"] - datos["antiguedad"]).abs() / 15).fillna(0.5) * 0.3
+    if datos.get("proyecto") is not None and "proyecto" in c.columns:
+        d += (c["proyecto"].fillna(0) != datos["proyecto"]).astype(float) * 0.8   # nuevo vs. usado
+    if datos.get("latitud") is not None and datos.get("longitud") is not None and "latitud" in c.columns:
+        km = np.hypot((c["latitud"] - datos["latitud"]) * 111, (c["longitud"] - datos["longitud"]) * 110.6)
+        d += (km / 2).fillna(1.0).clip(upper=3) * 0.5      # cerca del punto elegido en el mapa, mejor
     return d
 
 
