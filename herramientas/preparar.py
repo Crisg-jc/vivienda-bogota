@@ -72,7 +72,9 @@ def actualizar_config():
     que siguen en su valor viejo por defecto (los que alguien cambió a propósito se respetan).
     Los portales, el correo y la autorización de términos no se tocan. Queda copia del original."""
     import re
-    ruta = RAIZ / "config" / "portales.yaml"
+
+    from scraper.recolectar import asegurar_conf
+    ruta = asegurar_conf()
     if not ruta.exists():
         return
     texto = ruta.read_text(encoding="utf-8")

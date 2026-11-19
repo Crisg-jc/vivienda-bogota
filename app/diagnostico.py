@@ -82,7 +82,7 @@ def revisar(con_red: bool = True) -> dict:
     # ---------------------------------------------------------------- carpetas y archivos
     for rel in ("app/static/index.html", "app/static/app.js", "app/static/estilos.css",
                 "app/static/vendor/leaflet/leaflet.js", "app/static/geo/localidades.geojson",
-                "app/static/geo/region.geojson", "config/portales.yaml", "requirements.txt"):
+                "app/static/geo/region.geojson", "config/portales.ejemplo.yaml", "requirements.txt"):
         ruta = RAIZ / rel
         if ruta.exists() and ruta.stat().st_size > 0:
             inf.ok("archivos", rel, f"{ruta.stat().st_size:,} bytes")

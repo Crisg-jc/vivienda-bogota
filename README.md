@@ -104,7 +104,7 @@ Las reglas de cortesía son las mismas de la recolección manual: pausa de 4 a 8
 
 **Antes de que empiece a recolectar** (una sola vez):
 
-1. Una persona del equipo lee los términos de uso del portal y, si permiten la extracción, pone en `config/portales.yaml`: `terminos_revisados: true`, su nombre en `revisado_por` y la fecha en `fecha_revision`.
+1. Una persona del equipo lee los términos de uso del portal y, si permiten la extracción, pone en `config/portales.yaml` (se crea sola la primera vez que abre la aplicación, copiando `config/portales.ejemplo.yaml`; el zip ya no la trae, así que actualizar nunca borra la autorización): `terminos_revisados: true`, su nombre en `revisado_por` y la fecha en `fecha_revision`.
 2. Cambie `CAMBIAR@correo.com` en `user_agent` por un correo real de contacto.
 
 Mientras ningún portal esté autorizado, la sección "Actualización de los datos" de la página lo dice y no se visita nada.
@@ -269,7 +269,8 @@ comun/registro.py    registro (logs) de todos los procesos: formato, archivos, r
 modelo/              carga del dataset, línea base, entrenamiento, estimación y datos de demostración
 scraper/             recolección: robots.txt, pausas, freno ante bloqueos, extracción y ciclo automático
 limpieza/            normalización, localidad por coordenadas, deduplicación, versionado
-config/portales.yaml portales, URLs, pausas y control de términos de uso
+config/portales.ejemplo.yaml  configuración de ejemplo (portales, URLs, pausas, términos de uso)
+config/portales.yaml          la suya: se crea sola a partir del ejemplo y ninguna actualización la reemplaza
 sql/schema.sql       esquema de referencia en PostgreSQL
 tests/               pruebas del recolector, la limpieza, el modelo, la API y el registro
 iniciar.bat          instala y abre la aplicación con doble clic (Windows); iniciar.sh en Linux/macOS

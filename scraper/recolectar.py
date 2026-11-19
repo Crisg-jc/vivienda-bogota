@@ -24,12 +24,27 @@ from .http import BloqueoDelPortal, Cliente
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 
 
+CONFIG = RAIZ / "config" / "portales.yaml"
+EJEMPLO = RAIZ / "config" / "portales.ejemplo.yaml"
+
+
+def asegurar_conf() -> pathlib.Path:
+    """config/portales.yaml es de cada equipo y no viene en el zip (así una actualización no la pisa).
+    La primera vez se crea copiando config/portales.ejemplo.yaml, con todos los portales sin autorizar."""
+    if not CONFIG.exists() and EJEMPLO.exists():
+        CONFIG.write_text(EJEMPLO.read_text(encoding="utf-8"), encoding="utf-8")
+        logging.getLogger("vivienda.config").info(
+            "Creado %s a partir del ejemplo. Para recolectar, revise los términos de uso y ponga "
+            "terminos_revisados: true en el portal correspondiente.", CONFIG)
+    return CONFIG
+
+
 def cargar_conf():
-    ruta = RAIZ / "config" / "portales.yaml"
+    ruta = asegurar_conf()
     try:
         conf = yaml.safe_load(ruta.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        logging.getLogger("vivienda.config").error("No existe %s: restáurelo desde el zip o el repositorio", ruta)
+        logging.getLogger("vivienda.config").error("No existe %s ni config/portales.ejemplo.yaml: restaure el ejemplo desde el zip o el repositorio", ruta)
         raise
     except UnicodeDecodeError:
         logging.getLogger("vivienda.config").error(

@@ -53,3 +53,14 @@ def test_flujo(tmp_path, monkeypatch):
     assert len(df) == 2
     assert set(df.localidad) == {"Suba", "Usaquén"}
     assert set(df.barrio) == {"Niza", "Cedritos"}
+
+
+def test_config_local_se_crea_del_ejemplo_y_no_se_pisa(tmp_path, monkeypatch):
+    """El zip trae solo el ejemplo: la configuración de cada equipo (autorización, correo) nunca se reemplaza."""
+    ejemplo, config = tmp_path / "portales.ejemplo.yaml", tmp_path / "portales.yaml"
+    ejemplo.write_text("general: {}\nportales: {fincaraiz: {terminos_revisados: false}}\n", encoding="utf-8")
+    monkeypatch.setattr(rc, "EJEMPLO", ejemplo)
+    monkeypatch.setattr(rc, "CONFIG", config)
+    assert rc.cargar_conf()["portales"]["fincaraiz"]["terminos_revisados"] is False
+    config.write_text("general: {}\nportales: {fincaraiz: {terminos_revisados: true}}\n", encoding="utf-8")
+    assert rc.cargar_conf()["portales"]["fincaraiz"]["terminos_revisados"] is True

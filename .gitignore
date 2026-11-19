@@ -13,6 +13,11 @@ datos/*
 carga_manual/*
 !carga_manual/plantilla_captura.csv
 
+# Configuración local: cada equipo tiene la suya (autorización de términos, correo de contacto).
+# El zip y el repositorio traen config/portales.ejemplo.yaml; la aplicación la copia la primera vez.
+# Así descomprimir una versión nueva nunca borra la autorización ni el correo.
+config/portales.yaml
+
 # Productos que se regeneran
 artefactos/*
 !artefactos/.gitkeep
