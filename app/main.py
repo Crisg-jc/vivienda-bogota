@@ -554,7 +554,10 @@ def api_historia(url: str = Query(..., max_length=500)):
     from . import historial
     h = historial.historia(motor_bd(), url)
     if h is None:
-        raise HTTPException(404, "Ese aviso no está en la base.")
+        # El aviso viene de un corte guardado (por ejemplo, el de evaluación) y esta base no lo ha visto:
+        # no es un error, simplemente no hay historia que mostrar.
+        return {"eventos": [], "dias_publicado": None, "disponible": None, "desde_fuente": None,
+                "mensaje": "Este aviso viene de un corte guardado; la base de este equipo todavía no tiene su historia."}
     return h
 
 

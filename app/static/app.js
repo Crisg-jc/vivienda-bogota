@@ -1266,7 +1266,7 @@ function pintarAvisoFuente(a) {
   } else if (a.situacion !== "en_curso" && u && ["sin_conexion", "error", "bloqueado"].includes(u.resultado)) {
     texto = `No se pudo verificar con la fuente en el último intento (${u.mensaje || RESULTADOS[u.resultado]}). ${desde}${viejos}`;
   } else if (a.situacion === "sin_portales") {
-    texto = `La recolección no está autorizada (falta terminos_revisados: true en config/portales.yaml), así que los datos no se están verificando. ${desde}`;
+    texto = `La recolección automática está apagada porque ningún portal está autorizado (terminos_revisados en config/portales.yaml). Los datos que ve son un corte guardado y no se están verificando con la fuente. ${desde}`;
   } else if (a.situacion === "apagado") {
     texto = `La actualización automática está apagada: los datos no se están verificando con la fuente. ${desde}`;
   }

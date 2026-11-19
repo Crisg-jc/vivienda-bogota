@@ -2,6 +2,7 @@ import { esc, fechaDia, fmt, m2 } from "./base.js";
 
 // Línea de tiempo de un aviso (/api/historia), para el panel de detalle.
 export function historiaHTML(h) {
+  if (!h.eventos.length) return `<p class="como-leer">${esc(h.mensaje || "Sin historia registrada para este aviso.")}</p>`;
   return `<ol class="linea-tiempo">${h.eventos.map((e) => `<li class="ev ev--${esc(e.tipo)}">
       <time>${e.fecha ? fechaDia(e.fecha) : "—"}</time> ${esc(e.texto || e.tipo)}</li>`).join("")}</ol>
     <p class="como-leer">${h.dias_publicado != null ? `${h.disponible ? "Lleva" : "Estuvo"} ${fmt.format(h.dias_publicado)} días publicado (desde la ${esc(h.desde_fuente)}).` : ""}</p>`;

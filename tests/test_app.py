@@ -259,3 +259,10 @@ def test_panorama(cliente):
     assert p["m2"]["valor"] > 0 and p["m2"]["avisos"] > 0
     for k in ("nuevos", "bajadas_precio", "retirados"):
         assert p[k]["comparable"] or p[k]["motivo"]      # o compara, o explica por qué no
+
+
+def test_historia_de_aviso_sin_registro_no_es_error(cliente):
+    """Un aviso del corte guardado que la base no ha visto: historia vacía con mensaje, no un 404."""
+    c, _ = cliente
+    r = c.get("/api/historia", params={"url": "https://ejemplo.invalid/aviso-que-no-esta"})
+    assert r.status_code == 200 and r.json()["eventos"] == [] and r.json()["mensaje"]

@@ -24,6 +24,7 @@ RAIZ = pathlib.Path(__file__).resolve().parents[1]
 DEMO = RAIZ / "datos" / "demo" / "dataset_demo.csv"
 MUESTRA = RAIZ / "muestra" / "dataset_corte_2026-11-19.csv"
 log = logging.getLogger("vivienda.datos")
+_AVISADO_MUESTRA = False
 
 NUMERICAS = ["area_m2", "habitaciones", "banos", "estrato", "parqueaderos", "antiguedad", "piso",
              "administracion", "proyecto"]
@@ -54,8 +55,10 @@ def ubicar() -> tuple[pathlib.Path | None, str]:
         log.debug("Cortes encontrados en datos/: %s", sorted(v for v, _ in cortes))
         return max(cortes)[1], "real"
     if MUESTRA.exists():
-        log.info("No hay cortes propios en datos/: se usa el corte de evaluación %s (avisos reales "
+        global _AVISADO_MUESTRA
+        (log.debug if _AVISADO_MUESTRA else log.info)("No hay cortes propios en datos/: se usa el corte de evaluación %s (avisos reales "
                  "del 19 de noviembre de 2026) hasta que el recolector publique el primero", MUESTRA.name)
+        _AVISADO_MUESTRA = True
         return MUESTRA, "real"
     if DEMO.exists() and os.environ.get("VIVIENDA_DEMO") == "1":
         log.debug("No hay cortes reales en datos/ y VIVIENDA_DEMO=1: se usa el de demostración")
