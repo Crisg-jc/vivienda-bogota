@@ -64,7 +64,7 @@ Necesita Python 3.11 o superior.
 
 **En Windows, sin escribir comandos:** descomprima el proyecto y haga doble clic en `iniciar.bat`. La primera vez crea el entorno e instala las librerías (unos minutos); después revisa que todo esté bien, copia la base `vivienda.db` del recolector anterior si la encuentra en Descargas, y abre el navegador solo. En Linux o macOS: `./iniciar.sh`.
 
-Después, para **actualizar** a una versión nueva: descargue el zip a Descargas y haga doble clic en `actualizar.bat` (detiene el recolector, conserva `config/portales.yaml` y la carpeta `datos`, descomprime y vuelve a abrir). `iniciar.bat` deja además un ícono **Vivienda Bogotá** en el escritorio.
+Después, para **actualizar** a una versión nueva: descargue el zip a Descargas y, en PowerShell, ejecute `powershell -ExecutionPolicy Bypass -File herramientas\actualizar.ps1` (busca sola la carpeta con su base, conserva `datos` y `config/portales.yaml` y abre la aplicación), o haga doble clic en `actualizar.bat` (detiene el recolector, conserva `config/portales.yaml` y la carpeta `datos`, descomprime y vuelve a abrir). `iniciar.bat` deja además un ícono **Vivienda Bogotá** en el escritorio.
 
 A mano:
 
