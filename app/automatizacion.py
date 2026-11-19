@@ -131,7 +131,12 @@ class Orquestador:
         if "cambiar" in contacto.lower() or "example" in contacto.lower() or "@" not in contacto:
             log.warning("El user_agent de config/portales.yaml no tiene un correo de contacto real: %r", contacto)
         self.proximo = ahora() + dt.timedelta(seconds=aj["primer_ciclo_tras_segundos"])
-        if self.segundo_plano():
+        autorizados = [n for n, p in conf["portales"].items() if p.get("habilitado") and p.get("terminos_revisados")]
+        if not autorizados:
+            # Instalación nueva (por ejemplo, para evaluar la app): sin portal autorizado no hay nada que
+            # recolectar, así que no se deja un proceso corriendo en el equipo. La app usa el corte que tenga.
+            log.info("Ningún portal autorizado en config/portales.yaml: no se arranca el recolector en segundo plano.")
+        elif self.segundo_plano():
             if servicio.vivo():
                 log.info("Ya hay un recolector en segundo plano trabajando (pid %s): la app solo muestra su estado",
                          servicio.leer_latido().get("pid"))

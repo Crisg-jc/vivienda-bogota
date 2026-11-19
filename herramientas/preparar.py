@@ -112,6 +112,14 @@ def inicio_automatico():
     if aj.get("segundo_plano", True) is False or aj.get("activo", True) is False:
         log.info("Recolector en segundo plano desactivado en config/portales.yaml: no se configura el inicio automático")
         return
+    try:
+        portales = (yaml.safe_load((RAIZ / "config" / "portales.yaml").read_text(encoding="utf-8")) or {}).get("portales") or {}
+    except Exception:
+        portales = {}
+    if not any(p.get("habilitado") and p.get("terminos_revisados") for p in portales.values() if isinstance(p, dict)):
+        # Una instalación para probar la app no deja nada arrancando con Windows.
+        log.info("Ningún portal autorizado todavía: no se configura el inicio automático del recolector")
+        return
     inicio = pathlib.Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
     if not inicio.exists():
         log.warning("No se encontró la carpeta Inicio de Windows (%s): el recolector arrancará al abrir la app", inicio)
