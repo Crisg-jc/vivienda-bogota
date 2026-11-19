@@ -160,7 +160,7 @@ class Orquestador:
         if self.hilo is None:
             return False, "La automatización está apagada."
         if self.segundo_plano() and servicio.vivo():
-            if cy.leer_estado().get("estado") == "en_curso":
+            if cy.ciclo_activo():
                 return False, "Ya hay un ciclo en curso."
             servicio.pedir_ciclo()
             return True, "Ciclo pedido al recolector en segundo plano."
@@ -294,7 +294,8 @@ class Orquestador:
         latido = servicio.leer_latido()
         externo = self.hilo is not None and aj.get("segundo_plano", True) and servicio.vivo(latido)
         if externo:
-            en_curso = ciclo.get("estado") == "en_curso" and latido.get("estado") == "en_curso"
+            # Misma regla que ejecutar_ahora: la página nunca ofrece "Actualizar ahora" si el servidor lo va a negar.
+            en_curso = cy.ciclo_activo()
             pausa = latido.get("pausa_hasta")
             pausa_hasta = dt.datetime.fromisoformat(pausa) if pausa else None
             proximo = dt.datetime.fromisoformat(latido["proximo"]) if latido.get("proximo") else None

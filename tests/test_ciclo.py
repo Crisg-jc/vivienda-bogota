@@ -295,3 +295,34 @@ def test_demanda_de_los_usuarios_pasa_primero(entorno, monkeypatch):
     cy.anotar_demanda("Chapinero")
     ciclo = cy.Ciclo(conf, cliente_cls=ClienteFalso)
     assert ciclo.pendientes("fincaraiz", 3)[0].endswith("chico-bogota/3")
+
+
+def _pid_muerto() -> int:
+    import subprocess
+    import sys
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+def test_candado_de_un_proceso_muerto_se_libera_de_inmediato(entorno):
+    """Regresión: al detener el recolector a la fuerza quedaba un candado reciente; durante 10 min la
+    página ofrecía "Actualizar ahora" y el servidor respondía 409 "Ya hay un ciclo en curso"."""
+    import os
+    cy.CARPETA.mkdir(parents=True, exist_ok=True)
+    cy.CANDADO.write_text(f"{_pid_muerto()} 2026-11-18T22:00:00", encoding="utf-8")
+    cy.escribir_estado(estado="en_curso", fase="revisando")
+    assert cy.proceso_vivo(os.getpid())
+    assert not cy.candado_vigente() and not cy.ciclo_activo()
+    assert cy.tomar_candado(240)
+    assert cy.candado_vigente()
+    cy.soltar_candado()
+
+
+def test_ciclo_activo_coincide_con_lo_que_permite_lanzar(entorno):
+    assert not cy.ciclo_activo()
+    assert cy.tomar_candado(240)
+    cy.escribir_estado(estado="en_curso")
+    assert cy.ciclo_activo()
+    cy.soltar_candado()
+    assert not cy.ciclo_activo()     # estado viejo "en_curso" sin candado: no hay ciclo

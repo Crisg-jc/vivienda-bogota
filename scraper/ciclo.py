@@ -115,17 +115,75 @@ def escribir_estado(**cambios) -> dict:
     return datos
 
 
+def proceso_vivo(pid: int) -> bool:
+    """¿Sigue corriendo ese proceso? Sin enviarle señales: en Windows, os.kill(pid, 0) lo terminaría."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, pid)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            codigo = ctypes.c_ulong()
+            return bool(k.GetExitCodeProcess(h, ctypes.byref(codigo))) and codigo.value == 259   # STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _pid_candado() -> int | None:
+    try:
+        return int(CANDADO.read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def candado_vigente() -> bool:
+    """Hay un ciclo corriendo de verdad: candado renovado hace menos de 10 min y su proceso vivo.
+    Un candado de un proceso que ya no existe (recolector detenido a la fuerza, PC apagado) no cuenta."""
+    if not CANDADO.exists():
+        return False
+    try:
+        edad = time.time() - CANDADO.stat().st_mtime
+    except OSError:
+        return False
+    pid = _pid_candado()
+    return edad < 10 * 60 and (pid is None or proceso_vivo(pid))
+
+
+def ciclo_activo() -> bool:
+    """Lo que la app muestra y lo que decide si se puede lanzar otro ciclo salen de aquí, para que
+    nunca se contradigan (antes la página ofrecía "Actualizar ahora" y el servidor respondía 409)."""
+    return leer_estado().get("estado") == "en_curso" and candado_vigente()
+
+
 def tomar_candado(max_minutos: int) -> bool:
     """El ciclo en curso renueva el candado en cada paso (menos de un minuto entre pasos). Uno que
-    lleva más de 10 minutos sin renovarse es de un ciclo que se cortó (app cerrada, PC apagado)."""
+    lleva más de 10 minutos sin renovarse, o cuyo proceso ya no existe, es de un ciclo que se cortó."""
     CARPETA.mkdir(parents=True, exist_ok=True)
     if CANDADO.exists():
         edad = time.time() - CANDADO.stat().st_mtime
-        if edad < 10 * 60:
+        pid = _pid_candado()
+        if pid is not None and pid != os.getpid() and not proceso_vivo(pid):
+            log.warning("Candado del proceso %s, que ya no existe (ciclo cortado): se libera", pid)
+            CANDADO.unlink(missing_ok=True)
+            edad = None
+        if edad is not None and edad < 10 * 60:
             log.info("Otro ciclo tiene el candado (renovado hace %.0fs): no se inicia otro", edad)
             return False          # otro ciclo sigue en curso
-        log.warning("Candado abandonado (%.0f min sin renovarse, ciclo cortado): se libera", edad / 60)
-        CANDADO.unlink(missing_ok=True)
+        if edad is not None:
+            log.warning("Candado abandonado (%.0f min sin renovarse, ciclo cortado): se libera", edad / 60)
+            CANDADO.unlink(missing_ok=True)
     CANDADO.write_text(f"{os.getpid()} {ahora().isoformat()}", encoding="utf-8")
     log.debug("Candado tomado por el proceso %s", os.getpid())
     return True
