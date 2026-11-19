@@ -16,3 +16,4 @@ ignore = ["E501", "E702", "E731", "E741"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["con_muestra: la prueba usa el corte de evaluación que trae el repositorio (muestra/)"]

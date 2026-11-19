@@ -3,10 +3,13 @@
 Orden de búsqueda:
   1. la ruta de la variable de entorno VIVIENDA_DATASET, si existe;
   2. el corte más reciente datos/dataset_vN.csv producido por limpieza.construir_dataset;
-  3. datos/demo/dataset_demo.csv, datos SINTÉTICOS, SOLO si VIVIENDA_DEMO=1 (pruebas y desarrollo).
+  3. muestra/dataset_corte_2026-11-19.csv: corte real congelado que viene con el repositorio, para
+     que quien instale la aplicación (por ejemplo, para evaluarla) la pueda probar de inmediato. En
+     cuanto el recolector produce su primer dataset_vN.csv, ese corte propio lo reemplaza;
+  4. datos/demo/dataset_demo.csv, datos SINTÉTICOS, SOLO si VIVIENDA_DEMO=1 (pruebas y desarrollo).
      Sin esa variable, la aplicación nunca los usa: sin datos reales, dice que no los hay.
 
-El tercer caso existe solo para que la aplicación se pueda probar sin recolectar nada. Todo lo que
+El cuarto caso existe solo para que la aplicación se pueda probar sin recolectar nada. Todo lo que
 venga de él se marca como demostración en la API y en la interfaz.
 """
 import hashlib
@@ -19,6 +22,7 @@ import pandas as pd
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 DEMO = RAIZ / "datos" / "demo" / "dataset_demo.csv"
+MUESTRA = RAIZ / "muestra" / "dataset_corte_2026-11-19.csv"
 log = logging.getLogger("vivienda.datos")
 
 NUMERICAS = ["area_m2", "habitaciones", "banos", "estrato", "parqueaderos", "antiguedad", "piso",
@@ -49,6 +53,10 @@ def ubicar() -> tuple[pathlib.Path | None, str]:
     if cortes:
         log.debug("Cortes encontrados en datos/: %s", sorted(v for v, _ in cortes))
         return max(cortes)[1], "real"
+    if MUESTRA.exists():
+        log.info("No hay cortes propios en datos/: se usa el corte de evaluación %s (avisos reales "
+                 "del 19 de noviembre de 2026) hasta que el recolector publique el primero", MUESTRA.name)
+        return MUESTRA, "real"
     if DEMO.exists() and os.environ.get("VIVIENDA_DEMO") == "1":
         log.debug("No hay cortes reales en datos/ y VIVIENDA_DEMO=1: se usa el de demostración")
         return DEMO, "demo"

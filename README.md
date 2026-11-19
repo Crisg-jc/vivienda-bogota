@@ -8,6 +8,22 @@ Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Crist
 
 > La estimación es una referencia del precio al que se publican apartamentos similares. **No es un avalúo comercial.**
 
+## Probar la aplicación en 3 pasos
+
+Funciona sin configurar nada: el repositorio trae un **corte real de 3.544 avisos** de Finca Raíz (19 de noviembre de 2026, en `muestra/`), así que la aplicación estima precios desde el primer arranque.
+
+1. **Instale Python 3.11 o más reciente** desde [python.org](https://www.python.org/downloads/). En Windows, marque la casilla *Add python.exe to PATH* durante la instalación.
+2. **Descargue el proyecto**: botón verde *Code* → *Download ZIP* y descomprímalo, o `git clone https://github.com/Crisg-jc/vivienda-bogota.git`.
+3. **Ábralo**:
+   - Windows: doble clic en `iniciar.bat` (o, en PowerShell dentro de la carpeta, `.\iniciar.bat`).
+   - macOS o Linux: `./iniciar.sh` en una terminal dentro de la carpeta.
+
+La primera vez instala las librerías y entrena el modelo (2 a 5 minutos, según el equipo y la conexión). Después abre el navegador en `http://127.0.0.1:8000`. Las siguientes veces abre en segundos. Para cerrarla: Ctrl+C en la ventana negra.
+
+Qué probar: en **Estimar**, describa un apartamento (por ejemplo 70 m², Suba, estrato 4, 3 habitaciones, 2 baños, 1 parqueadero) y vea el precio, el rango y los avisos comparables; en **Zonas**, elija una localidad en el mapa; en **Avisos**, filtre, ordene y abra el detalle de un aviso; en **Modelo**, revise cómo se midió.
+
+La recolección automática viene apagada: para activarla, alguien debe revisar los términos de uso del portal y ponerlo en `config/portales.yaml` (ver "Actualización automática"). Mientras tanto, las secciones que dependen de la historia de la base (Panorama y Actualización) lo dicen en pantalla en vez de mostrar cifras.
+
 ## Qué hace
 
 - **Precios por zona:** mapa real de Colombia, Bogotá y sus 20 localidades, coloreadas por el metro cuadrado mediano. Al elegir una localidad se ven el precio promedio y mediano, el precio por m² frente a Bogotá, el rango de precios, el valor estimado de un apartamento típico, los barrios y los avisos que están por debajo de lo esperado. Debajo, una comparación de todas las localidades.
@@ -32,7 +48,7 @@ La sección Actualización muestra si el recolector está vivo, desde cuándo, c
 
 ## Pruebas y regresión
 
-- `pytest -q`: 95 pruebas. Incluyen la concurrencia de la base (tres escritores y un lector en procesos aparte), el ciclo contra un portal ficticio, la limpieza de atípicos, el m² de los vecinos sin trampa, la mezcla medida, el historial, la API y una prueba "dorada" de los comparables (`tests/golden/comparables.json`; si un cambio los mueve a propósito: `ACTUALIZAR_GOLDEN=1 pytest tests/test_golden.py` y revisar el diff).
+- `pytest -q`: 89 pruebas de servidor; con `tests/e2e`, 114 en total. Incluyen la concurrencia de la base (tres escritores y un lector en procesos aparte), el ciclo contra un portal ficticio, la limpieza de atípicos, el m² de los vecinos sin trampa, la mezcla medida, el historial, la API y una prueba "dorada" de los comparables (`tests/golden/comparables.json`; si un cambio los mueve a propósito: `ACTUALIZAR_GOLDEN=1 pytest tests/test_golden.py` y revisar el diff).
 - `pytest tests/e2e` (necesita `pip install playwright && python -m playwright install chromium`): recorre la interfaz en un navegador real con un servidor aislado (datos sintéticos y carpetas temporales): estimación y explicación, formulario completo sin bajar a 1528×740, 1366×768 y 390×844, sin desborde horizontal, sin comparables sin precio inventado, perfil de la zona, más detalles y ubicación enviados a la API, zonas sincronizadas, avisos sin "Nan", precisión medida, comparar, modo oscuro recordado, hoja de impresión y accesibilidad con axe-core (`AXE_PATH`). Falla ante cualquier error de JavaScript o de consola.
 - CI (`.github/workflows/pruebas.yml`): pruebas en Python 3.11 a 3.13 y en Windows, compatibilidad de JavaScript y CSS con los navegadores de `.browserslistrc`, regresión en el navegador e imagen de Docker.
 

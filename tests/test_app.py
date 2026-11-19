@@ -14,6 +14,7 @@ def cliente(tmp_path_factory):
     from modelo import demo, entrenar
     mp.setattr(D, "DEMO", raiz / "datos" / "demo" / "dataset_demo.csv")
     mp.setattr(D, "RAIZ", raiz)
+    mp.setattr(D, "MUESTRA", raiz / "muestra" / "no-existe.csv")
     mp.setattr(demo, "DEMO", D.DEMO)
     mp.setattr(entrenar, "ARTEFACTOS", raiz / "artefactos")
     mp.setattr(entrenar, "MODELO", raiz / "artefactos" / "modelo.joblib")

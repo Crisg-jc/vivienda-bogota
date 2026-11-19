@@ -81,3 +81,17 @@ def test_cada_aviso_trae_fuente_y_fechas_y_los_retirados_no_se_muestran(tmp_path
             assert "https://x.co/apto/7" not in urls and len(urls) == 29
     finally:
         mp.undo()
+
+
+@pytest.mark.con_muestra
+def test_sin_cortes_propios_usa_el_corte_de_evaluacion(tmp_path, monkeypatch):
+    """Recién instalada (sin base ni cortes propios), la aplicación usa el corte real que trae el
+    repositorio, para que se pueda probar de inmediato; un corte propio lo reemplaza."""
+    from modelo import datos
+    monkeypatch.delenv("VIVIENDA_DATASET", raising=False)
+    monkeypatch.setattr(datos, "RAIZ", tmp_path)
+    (tmp_path / "datos").mkdir()
+    ruta, tipo = datos.ubicar()
+    assert ruta == datos.MUESTRA and tipo == "real" and ruta.exists()
+    (tmp_path / "datos" / "dataset_v1.csv").write_text("precio\n1\n", encoding="utf-8")
+    assert datos.ubicar()[0].name == "dataset_v1.csv"

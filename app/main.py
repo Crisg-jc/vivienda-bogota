@@ -54,7 +54,9 @@ def asegurar_dataset_real() -> None:
     copiada de otra carpeta, o un ciclo que no alcanzó a publicar), se construye ahora mismo a
     partir de la base, sin visitar ningún portal."""
     ruta, tipo = D.ubicar()
-    if tipo == "real" or os.environ.get("VIVIENDA_DATASET"):
+    # El corte de evaluación que trae el repositorio no cuenta: si la base ya tiene avisos propios, mandan ellos.
+    propio = tipo == "real" and ruta is not None and ruta.resolve() != D.MUESTRA.resolve()
+    if propio or os.environ.get("VIVIENDA_DATASET"):
         return
     try:
         eng = motor_bd()
