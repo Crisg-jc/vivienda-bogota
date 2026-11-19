@@ -20,6 +20,7 @@ import datetime as dt
 import json
 import logging
 import math
+import os
 import pathlib
 import time
 
@@ -42,7 +43,7 @@ from .vecinos import VecinosM2
 
 log = logging.getLogger("vivienda.modelo")
 
-ARTEFACTOS = D.RAIZ / "artefactos"
+ARTEFACTOS = pathlib.Path(os.environ.get("VIVIENDA_ARTEFACTOS", D.RAIZ / "artefactos"))   # pruebas: carpeta aparte
 MODELO = ARTEFACTOS / "modelo.joblib"
 METRICAS = ARTEFACTOS / "metricas.json"
 SEMILLA = 42

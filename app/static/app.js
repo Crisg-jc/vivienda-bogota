@@ -1,87 +1,16 @@
-// Vivienda Bogotá: interfaz sin dependencias (salvo Leaflet para el mapa).
-const $ = (s, r = document) => r.querySelector(s);
-const ultimo = (lista) => lista[lista.length - 1];   // Array.prototype.at no existe en Safari < 15.4
-const NS = "http://www.w3.org/2000/svg";
+// Vivienda Bogotá: interfaz sin dependencias (salvo Leaflet para el mapa). Este archivo arma la página;
+// las utilidades y partes independientes están en js/.
+import { $, api, teselas, tono, area, corto, diaLargo, el, esc, fechaCorta, fechaLarga, fmt, fmt1, haceCuanto, hora, m2, millones, NIVEL, NOMBRE_PORTAL, pct, pctEntero, pctTexto, reducirMovimiento, REG, RESULTADOS, seguro, ultimo, urlSegura } from "./js/base.js";
+import { lineaTendencia, mostrarHistoria } from "./js/historial.js";
+import { mezclaTexto, pintarPrecision } from "./js/precision.js";
+import { actualizarComparacion, iniciarComparar } from "./js/comparar.js";
+import { iniciarImpresion } from "./js/imprimir.js";
+import { iniciarTema } from "./js/tema.js";
+
+let ULTIMO = null;     // última estimación pintada: la usan comparar e imprimir
+
 const COLOR_ESTRATO = [null, "--e1", "--e2", "--e3", "--e4", "--e5", "--e6"]
   .map((v) => v && getComputedStyle(document.documentElement).getPropertyValue(v).trim());
-const reducirMovimiento = matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-// ---------------------------------------------------------------- formato
-const fmt = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
-const fmt1 = new Intl.NumberFormat("es-CO", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const millones = (v) => (v >= 1e9 ? `$${fmt.format(Math.round(v / 1e6))} millones` : `$${fmt.format(Math.round(v / 1e6))} millones`);
-const corto = (v) => `$${fmt.format(Math.round(v / 1e6))} M`;
-const m2 = (v) => `$${fmt1.format(v / 1e6)} M`;
-const area = (v) => `${fmt.format(v)} m²`;
-
-// Todo texto que viene de los datos pasa por esc() antes de entrar en HTML: un barrio o una localidad
-// con "<script>" en un CSV ajeno se muestra como texto, nunca se ejecuta.
-const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
-const urlSegura = (u) => (typeof u === "string" && /^https?:\/\//.test(u) ? u : null);
-
-// Registro del navegador (registro.js). Si ese archivo no cargó, se usa la consola sin más.
-const REG = window.REG || { debug() {}, info: console.info.bind(console), warn: console.warn.bind(console),
-  error: console.error.bind(console), tiempo: () => ({ fin() {}, fallo() {} }) };
-let contadorPeticiones = 0;
-
-// Toda llamada a la API pasa por aquí: se registra método, ruta, código, duración y el rid que la
-// enlaza con la línea del servidor en datos/registros/vivienda.log.
-async function api(ruta, opciones = {}) {
-  const metodo = opciones.method || "GET";
-  const rid = `${REG.sesion || "nav"}-${++contadorPeticiones}`;
-  const inicio = performance.now();
-  const sondeo = ruta === "/api/automatizacion";
-  REG.debug(`→ ${metodo} ${ruta}`, opciones.body ? JSON.parse(opciones.body) : undefined);
-  let r;
-  try {
-    r = await fetch(ruta, { ...opciones, headers: { ...(opciones.headers || {}), "X-Request-ID": rid } });
-  } catch (e) {
-    REG.error(`Sin respuesta del servidor en ${metodo} ${ruta} (rid=${rid}): ¿la aplicación está cerrada?`, e);
-    throw new Error("No hay conexión con la aplicación. ¿Sigue abierta la ventana donde la inició?");
-  }
-  const ms = Math.round(performance.now() - inicio);
-  if (!r.ok) {
-    let detalle = `Error ${r.status}`, cuerpo = null;
-    try { cuerpo = await r.json(); detalle = typeof cuerpo.detail === "string" ? cuerpo.detail : cuerpo.detail?.[0]?.msg || detalle; } catch {}
-    REG[r.status >= 500 ? "error" : "warn"](`${metodo} ${ruta} -> ${r.status} en ${ms} ms (rid=${rid}): ${detalle}`, cuerpo);
-    throw new Error(detalle);
-  }
-  let datos;
-  try {
-    datos = await r.json();
-  } catch (e) {
-    REG.error(`${metodo} ${ruta}: la respuesta no es JSON válido (rid=${rid})`, e);
-    throw new Error("La aplicación devolvió una respuesta dañada.");
-  }
-  if (!sondeo) REG.debug(`← ${metodo} ${ruta} ${r.status} en ${ms} ms`);
-  if (ms > 3000) REG.warn(`Respuesta lenta: ${metodo} ${ruta} tardó ${ms} ms (rid=${rid})`);
-  return datos;
-}
-
-// Ejecuta una carga y, si falla, la registra y muestra el problema en su sección en vez de dejarla vacía.
-async function seguro(que, fn, alFallar) {
-  const t = REG.tiempo(que);
-  try {
-    const v = await fn();
-    t.fin();
-    return v;
-  } catch (e) {
-    t.fallo(e);
-    if (alFallar) {
-      try { alFallar(e); } catch (e2) { REG.error(`También falló el aviso de error de ${que}`, e2); }
-    }
-    return undefined;
-  }
-}
-
-function el(nombre, atributos = {}, padre) {
-  const n = document.createElementNS(NS, nombre);
-  for (const [k, v] of Object.entries(atributos)) n.setAttribute(k, v);
-  if (padre) padre.appendChild(n);
-  return n;
-}
-
 function marcasBonitas(min, max, cuantas = 5) {
   const paso0 = (max - min) / cuantas;
   const mag = 10 ** Math.floor(Math.log10(paso0));
@@ -118,22 +47,6 @@ const textoDataset = (d, v) => {
   const cuando = v && v.ultima_verificacion ? `, verificados ${haceCuanto(v.ultima_verificacion)}` : "";
   return `${fmt.format(d.avisos)} avisos reales${cuando}`;
 };
-
-// ---------------------------------------------------------------- trazabilidad de cada aviso
-const NOMBRE_PORTAL = { fincaraiz: "Finca Raíz", ciencuadras: "Ciencuadras", metrocuadrado: "Metrocuadrado" };
-const fechaLarga = (iso) => new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
-const diaLargo = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" });
-
-function haceCuanto(iso) {
-  if (!iso) return "sin fecha";
-  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (min < 2) return "hace un momento";
-  if (min < 60) return `hace ${min} min`;
-  const h = Math.round(min / 60);
-  if (h < 24) return `hace ${h} h`;
-  const d = Math.round(h / 24);
-  return d === 1 ? "hace 1 día" : `hace ${d} días`;
-}
 
 // "Finca Raíz · verificado hace 2 h", con el detalle completo al pasar el puntero.
 function celdaFuente(a, corta = false) {
@@ -177,6 +90,9 @@ function avisoEnSeccion(selector, que) {
 
 async function iniciar() {
   const t = REG.tiempo("Arranque de la página");
+  iniciarTema();
+  iniciarComparar();
+  iniciarImpresion(() => ({ datos: ULTIMO ? ULTIMO.datos : leerFormulario(), dataset: ESTADO?.dataset, verificacion: ESTADO?.verificacion }));
   REG.debug("Leaflet disponible", { leaflet: Boolean(window.L), version: window.L?.version });
   if (!window.L) REG.error("Leaflet (mapas) no cargó: los mapas no se verán. Revise /static/vendor/leaflet/leaflet.js");
   ESTADO = await api("/api/estado");
@@ -313,7 +229,6 @@ function elegirEstrato(e, enfocar) {
 // y el formulario se adapta: cuántos avisos hay de cada estrato, lo común en habitaciones, baños y
 // parqueaderos, y el rango de áreas que se publica allí.
 const PERFILES = new Map();
-let perfilActual = null;
 
 async function cargarPerfil(localidad) {
   const clave = localidad || "";
@@ -324,12 +239,9 @@ async function cargarPerfil(localidad) {
     PERFILES.set(clave, p);
   }
   if (($("#localidad").value || "") !== clave) return;     // el usuario ya eligió otra
-  perfilActual = p;
   REG.debug(`Perfil de ${p.zona}: ${p.n} avisos`, p.comunes);
   pintarPerfil(p);
 }
-
-const pctTexto = (n, total) => `${fmt.format(Math.round((n / total) * 100))} %`;
 
 function listaConteos(items, total, unidad) {
   if (!items || !items.length) return `<span class="pz-nada">sin datos</span>`;
@@ -448,8 +360,6 @@ async function estimarAhora() {
 // ---------------------------------------------------------------- resultado
 let primeraVez = true;
 
-const NIVEL = { alta: "Confiabilidad alta", media: "Confiabilidad media", baja: "Confiabilidad baja", insuficiente: "Sin información suficiente" };
-
 function pintarViabilidad(r, datos) {
   const c = r.comparables, caja = $("#r-viabilidad");
   caja.dataset.nivel = c.confiabilidad;
@@ -461,18 +371,6 @@ function pintarViabilidad(r, datos) {
     <p>${encontrados}</p>
     ${c.amplio && c.viable ? `<p class="viabilidad__aviso">No había suficientes coincidencias exactas: la búsqueda se amplió (detalle abajo, en "Cómo se obtuvo").</p>` : ""}
     ${c.viable ? "" : `<p>${esc(c.razones[0])}</p><p>Pruebe con características más comunes en ${esc(zona)} (vea "Lo que hay en ${esc(zona)}" en el formulario) o sin localidad.</p>`}`;
-}
-
-function mezclaTexto(c, r) {
-  const m = c.mezcla;
-  if (!m) return "";
-  const pc = Math.round(m.peso_comparables * 100);
-  const como = pc === 100 ? "solo de los comparables" : pc === 0 ? "solo del modelo (aquí los comparables acertaron menos)"
-    : `${pc} % de los comparables y ${100 - pc} % del modelo`;
-  const prueba = m.calibrado
-    ? `Así se fijó porque, en una prueba con ${fmt.format(m.pruebas)} avisos reales de confiabilidad ${esc(c.confiabilidad)} estimados como si fueran nuevos, esa mezcla fue la que menos falló (error mediano ${fmt1.format((m.error_tipico || 0) * 100)} %). El rango ${corto(r.minimo)} a ${corto(r.maximo)} es el que en esa prueba contuvo el precio real 8 de cada 10 veces.`
-    : `Todavía no hay suficientes pruebas con avisos reales de confiabilidad ${esc(c.confiabilidad)} para medir la mejor mezcla; se usa una por defecto y el rango del modelo${c.confiabilidad === "baja" ? ", ampliado" : ""}.`;
-  return `<p>Precio final = ${como}: ${corto(r.precio)}. ${prueba}</p>`;
 }
 
 function pintarExplicacion(r, datos) {
@@ -513,6 +411,8 @@ function pintarResultado(r, datos) {
   $("#resultado").setAttribute("aria-busy", "false");
   pintarViabilidad(r, datos);
   pintarExplicacion(r, datos);
+  ULTIMO = { r, datos };
+  actualizarComparacion(r, datos);
   const conPrecio = r.precio != null;
   $("#r-con-precio").hidden = !conPrecio;
   document.querySelector("#detalle .efectos").hidden = !conPrecio;
@@ -748,10 +648,7 @@ function colorM2(t) {
   return `rgb(${p.map((v, i) => Math.round(v + (q[i] - v) * u)).join(",")})`;
 }
 
-// ---------------------------------------------------------------- comparación con lo esperado
-const pct = (v) => `${v > 0 ? "+" : "−"}${fmt.format(Math.abs(Math.round(v * 100)))} %`;
-const pctEntero = (v) => `${fmt.format(Math.round(v * 100))} %`;
-const COLOR_CMP = { debajo: "#4A7E67", en_linea: "#A9B6AE", encima: "#B4472C" };
+const COLOR_CMP = { debajo: "#4A7E67", en_linea: "#A9B6AE", encima: tono("--ladrillo") };
 const TEXTO_CMP = { debajo: "por debajo de lo esperado", en_linea: "en línea con lo esperado", encima: "por encima de lo esperado" };
 
 function chipComparacion(a) {
@@ -837,8 +734,8 @@ function estiloLocalidad(f) {
   const color = colorZona(l);
   const elegida = f.properties.nombre === ZONAS.seleccion;
   return {
-    fillColor: color ?? "#DCE2DE", fillOpacity: color ? 0.62 : 0.45,
-    color: elegida ? "#17322C" : "#FFFFFF", weight: elegida ? 3 : 1.2, dashArray: color ? null : "4 3",
+    fillColor: color ?? tono("--mapa-vacio"), fillOpacity: color ? 0.62 : 0.45,
+    color: elegida ? tono("--trazo") : tono("--trazo-claro"), weight: elegida ? 3 : 1.2, dashArray: color ? null : "4 3",
   };
 }
 
@@ -857,7 +754,7 @@ function pintarMapaZonas(geo, puntos) {
     const mapa = L.map(caja, { scrollWheelZoom: false, zoomSnap: 0.25, minZoom: 4, maxZoom: 17 });
     ZONAS.mapa = mapa;
     // Calles de fondo (necesitan internet). Si no cargan, los límites siguen viéndose: son datos propios.
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    L.tileLayer(teselas(), {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> | Localidades: IDECA (CC BY 4.0) | Países: Natural Earth',
       maxZoom: 18,
     }).on("tileerror", tilesFallidas("mapa de zonas")).addTo(mapa);
@@ -865,8 +762,8 @@ function pintarMapaZonas(geo, puntos) {
     ZONAS.capaRegion = L.geoJSON(geo.reg, {
       interactive: false,
       style: (f) => (f.properties.nombre === "Colombia"
-        ? { fillColor: "#17322C", fillOpacity: 0.1, color: "#17322C", weight: 1.4 }
-        : { fillColor: "#7C9486", fillOpacity: 0.04, color: "#7C9486", weight: 0.8, dashArray: "3 3" }),
+        ? { fillColor: tono("--trazo"), fillOpacity: 0.1, color: tono("--trazo"), weight: 1.4 }
+        : { fillColor: tono("--liquen"), fillOpacity: 0.04, color: tono("--liquen"), weight: 0.8, dashArray: "3 3" }),
     }).addTo(mapa);
     const colombia = geo.reg.features.find((f) => f.properties.nombre === "Colombia");
     ZONAS.limites.colombia = L.geoJSON(colombia).getBounds();
@@ -886,7 +783,7 @@ function pintarMapaZonas(geo, puntos) {
       const nombre = f.properties.nombre;
       capa.bindTooltip(() => textoZona(nombre), { sticky: true, className: "etiqueta-loc" });
       capa.on({
-        mouseover: () => { if (nombre !== ZONAS.seleccion) capa.setStyle({ weight: 2.5, color: "#17322C" }); },
+        mouseover: () => { if (nombre !== ZONAS.seleccion) capa.setStyle({ weight: 2.5, color: tono("--trazo") }); },
         mouseout: () => ZONAS.capaLoc.resetStyle(capa),
         click: () => seleccionarZona(nombre, { encuadrar: true }),
       });
@@ -944,42 +841,6 @@ function encuadrar(vista) {
   if (ZONAS.mapa._loaded && !reducirMovimiento) ZONAS.mapa.flyToBounds(limites, { ...opciones, duration: 0.8 });
   else ZONAS.mapa.fitBounds(limites, opciones);
   document.querySelectorAll(".vistas button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.vista === vista)));
-}
-
-// ---------------------------------------------------------------- historial
-const fechaDia = (iso) => new Date(iso.length <= 10 ? `${iso}T12:00:00` : iso).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" });
-
-async function mostrarHistoria(boton) {
-  const fila = boton.closest("tr");
-  const abierta = fila.nextElementSibling?.classList.contains("fila-historia");
-  if (abierta) { fila.nextElementSibling.remove(); boton.setAttribute("aria-expanded", "false"); return; }
-  boton.setAttribute("aria-expanded", "true");
-  const extra = document.createElement("tr");
-  extra.className = "fila-historia";
-  extra.innerHTML = `<td colspan="${fila.children.length}">Cargando historial…</td>`;
-  fila.after(extra);
-  try {
-    const h = await api(`/api/historia?url=${encodeURIComponent(boton.dataset.url)}`);
-    REG.debug("Historial de un aviso", h);
-    extra.firstElementChild.innerHTML = `<ol class="linea-tiempo">${h.eventos.map((e) => `<li class="ev ev--${esc(e.tipo)}">
-        <time>${e.fecha ? fechaDia(e.fecha) : "—"}</time> ${esc(e.texto || e.tipo)}</li>`).join("")}</ol>
-      <p class="como-leer">${h.dias_publicado != null ? `${h.disponible ? "Lleva" : "Estuvo"} ${fmt.format(h.dias_publicado)} días publicado (desde la ${esc(h.desde_fuente)}).` : ""}</p>`;
-  } catch (e) {
-    extra.firstElementChild.textContent = `No se pudo leer el historial: ${e.message}`;
-  }
-}
-
-function lineaTendencia(semanas) {
-  const v = semanas.filter((s) => s.suficiente);
-  const W = 320, H = 90, P = 8;
-  const min = Math.min(...v.map((s) => s.mediana_m2)), max = Math.max(...v.map((s) => s.mediana_m2));
-  const x = (i) => P + (i * (W - 2 * P)) / Math.max(1, v.length - 1);
-  const y = (m) => H - P - ((m - min) / Math.max(1, max - min)) * (H - 2 * P);
-  const puntos = v.map((s, i) => `${x(i).toFixed(1)},${y(s.mediana_m2).toFixed(1)}`).join(" ");
-  return `<svg class="tendencia__svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="m² mediano por semana, de ${m2(v[0].mediana_m2)} a ${m2(v[v.length - 1].mediana_m2)}">
-    <polyline points="${puntos}" fill="none" stroke="currentColor" stroke-width="2"/>
-    ${v.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s.mediana_m2).toFixed(1)}" r="3"><title>Semana del ${fechaDia(s.semana)}: ${m2(s.mediana_m2)} (${s.n} avisos)</title></circle>`).join("")}
-  </svg>`;
 }
 
 async function pintarTendencia(nombre) {
@@ -1134,8 +995,8 @@ function puntoDe(localidad, similares) {
 function estiloMini(f) {
   const elegida = f.properties.nombre === MINI.localidad;
   return elegida
-    ? { fillColor: "#B4472C", fillOpacity: 0.18, color: "#B4472C", weight: 2.5 }
-    : { fillColor: "#17322C", fillOpacity: 0.03, color: "#7C9486", weight: 0.8 };
+    ? { fillColor: tono("--ladrillo"), fillOpacity: 0.18, color: tono("--ladrillo"), weight: 2.5 }
+    : { fillColor: tono("--trazo"), fillOpacity: 0.03, color: tono("--liquen"), weight: 0.8 };
 }
 
 // Encuadre del mini mapa. Se espera un cuadro para que invalidateSize ya haya medido la tarjeta
@@ -1169,7 +1030,7 @@ async function ubicarEstimacionSinRegistro(r, datos) {
   if (!MINI.mapa) {
     MINI.mapa = L.map("mini-mapa", { scrollWheelZoom: false, zoomControl: false, attributionControl: true, minZoom: 9, maxZoom: 16, zoomSnap: 0.25 });
     L.control.zoom({ position: "topright" }).addTo(MINI.mapa);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    L.tileLayer(teselas(), {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>', maxZoom: 18,
     }).on("tileerror", tilesFallidas("mini mapa del resultado")).addTo(MINI.mapa);
     REG.debug("Mini mapa del resultado creado");
@@ -1198,7 +1059,7 @@ async function ubicarEstimacionSinRegistro(r, datos) {
   MINI.vecinos.clearLayers();
   for (const s of r.similares) {
     if (!s.latitud || !s.longitud) continue;
-    L.circleMarker([s.latitud, s.longitud], { radius: 5, weight: 1.5, color: "#17322C", fillColor: "#FBFCFB", fillOpacity: 1 })
+    L.circleMarker([s.latitud, s.longitud], { radius: 5, weight: 1.5, color: tono("--trazo"), fillColor: tono("--papel"), fillOpacity: 1 })
       .bindTooltip(`${corto(s.precio)}, ${area(s.area_m2)}${s.localidad ? `<br>${esc(s.localidad)}` : ""}`, { className: "etiqueta-loc" })
       .addTo(MINI.vecinos);
   }
@@ -1230,11 +1091,6 @@ function marcarEnZonas(pos, r, datos) {
 
 // ---------------------------------------------------------------- actualización automática
 let FIRMA_DATASET = null, sondeo = null;
-const RESULTADOS = { completo: "Completo", bloqueado: "Bloqueado por el portal", sin_portales: "Sin portales autorizados",
-  error: "Error", sin_conexion: "Sin conexión", en_curso: "Otro ciclo en curso" };
-const hora = (iso) => new Date(iso).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" });
-const fechaCorta = (iso) => new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
-
 let situacionAnterior = null;
 async function cargarActualizacion() {
   clearTimeout(sondeo);
@@ -1416,31 +1272,6 @@ async function cargarModelo() {
   if (elegido !== "Línea base" && base) filas.splice(2, 0, ["Línea base en la misma prueba", corto(base.mae)]);
   $("#mo-prueba").innerHTML = filas.map(([k, v, c]) => `<div${c ? ` class="${c}"` : ""}><dt>${k}</dt><dd>${v}</dd></div>`).join("");
   pintarPrecision(m);
-}
-
-// ¿Cuánto aciertan de verdad? Prueba con avisos reales estimados como si fueran nuevos.
-function pintarPrecision(m) {
-  const pr = m.precision, caja = $("#mo-precision");
-  if (!pr || !pr.muestra) { caja.innerHTML = ""; return; }
-  const pct = (v) => (v == null ? "—" : `${fmt1.format(v * 100)} %`);
-  const orden = ["alta", "media", "baja", "insuficiente"].filter((k) => pr.niveles[k]);
-  const filas = orden.map((k) => {
-    const n = pr.niveles[k];
-    return `<tr><td>${NIVEL[k]}</td><td class="num">${fmt.format(n.n)}</td><td class="num">${pct(n.error_comparables)}</td>
-      <td class="num">${pct(n.error_modelo)}</td><td class="num">${pct(n.error_mezcla)}</td>
-      <td class="num">${n.peso_comparables == null ? "—" : `${Math.round(n.peso_comparables * 100)} %`}</td>
-      <td class="num">${pct(n.cobertura_rango_comparables)}</td></tr>`;
-  }).join("");
-  const loc = (m.por_localidad || []).map((z) => `<tr><td>${esc(z.localidad)}</td><td class="num">${fmt.format(z.n)}</td><td class="num">${pct(z.error_mediano)}</td></tr>`).join("");
-  caja.innerHTML = `
-    <h3>¿Cuánto aciertan de verdad?</h3>
-    <p class="como-leer">${esc(pr.metodo)} Muestra: ${fmt.format(pr.muestra)} avisos. Si la confiabilidad funciona, el error debería bajar de "baja" a "alta".</p>
-    <div class="desliza" tabindex="0" role="region" aria-label="Precisión por nivel de confiabilidad"><table class="tabla">
-      <thead><tr><th>Nivel</th><th class="num">Pruebas</th><th class="num">Error comparables</th><th class="num">Error modelo</th><th class="num">Error mezcla</th><th class="num">Peso comparables</th><th class="num">Acierto del rango de solo comparables</th></tr></thead>
-      <tbody>${filas}</tbody></table></div>
-    ${loc ? `<details class="precision__zonas"><summary>Error del modelo por localidad</summary><p class="como-leer">Mediana del error con avisos que el modelo no vio. Solo localidades con 5 avisos o más.</p>
-    <div class="desliza" tabindex="0" role="region" aria-label="Error por localidad"><table class="tabla"><thead><tr><th>Localidad</th><th class="num">Avisos</th><th class="num">Error mediano</th></tr></thead><tbody>${loc}</tbody></table></div></details>` : ""}
-    ${m.atipicos_excluidos ? `<p class="como-leer">${fmt.format(m.atipicos_excluidos)} avisos marcados como atípicos en la limpieza no entraron al entrenamiento.</p>` : ""}`;
 }
 
 // ---------------------------------------------------------------- navegación y precio flotante

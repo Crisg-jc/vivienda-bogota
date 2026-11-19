@@ -28,6 +28,10 @@
       <a href="#modelo">Modelo</a>
     </nav>
     <a class="barra__datos" id="insignia-datos" href="#actualizacion"><span class="pulso" aria-hidden="true"></span><span id="insignia-texto">Cargando datos…</span></a>
+    <button class="boton-tema" id="cambiar-tema" type="button" aria-pressed="false">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" fill="currentColor"/></svg>
+      <span id="tema-texto">Modo oscuro</span>
+    </button>
   </header>
 
   <details class="aviso-demo" id="aviso-demo" hidden>
@@ -36,6 +40,8 @@
   </details>
 
   <div class="aviso-fuente" id="aviso-fuente" role="status" hidden><p id="aviso-fuente-texto"></p></div>
+
+  <div class="impresion" id="impresion" hidden></div>
 
   <main>
     <!-- ============================================================ SIN DATOS REALES -->
@@ -91,8 +97,9 @@
             <small class="pista" id="p-parqueaderos"></small>
           </div>
           <div class="campo">
-            <label for="antiguedad" class="contador__etiqueta">Antigüedad, años</label>
-            <input id="antiguedad" class="campo-corto" name="antiguedad" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="Opcional">
+            <label for="antiguedad" class="contador__etiqueta">Antigüedad</label>
+            <input id="antiguedad" class="campo-corto" name="antiguedad" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="Años" aria-describedby="ayuda-antiguedad">
+            <small class="pista" id="ayuda-antiguedad">Opcional · 0 = para estrenar</small>
           </div>
         </div>
 
@@ -154,6 +161,11 @@
             <p class="metro__contexto" id="r-zona" hidden></p>
           </div>
 
+          <div class="resultado__acciones">
+            <button class="boton-secundario" id="fijar-comparar" type="button">Fijar para comparar</button>
+            <button class="boton-secundario" id="imprimir" type="button">Descargar en PDF</button>
+          </div>
+          <div class="comparacion" id="comparacion" aria-live="polite" hidden></div>
           </div>
 
           <figure class="ubicar">

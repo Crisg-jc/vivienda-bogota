@@ -19,6 +19,19 @@
   var depurar = false;
   var yaEnviado = false;
 
+  // Tema: claro u oscuro según el sistema, salvo que la persona haya elegido uno (botón del menú).
+  // Se fija aquí, antes de pintar nada, para que la página no destelle en blanco al abrir.
+  try {
+    var elegido = localStorage.getItem("vivienda-tema");
+    var oscuro = elegido ? elegido === "oscuro" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+    if (elegido) document.documentElement.setAttribute("data-tema", elegido);
+    document.documentElement.setAttribute("data-tema-efectivo", oscuro ? "oscuro" : "claro");
+  } catch (e) {
+    try {
+      if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.setAttribute("data-tema-efectivo", "oscuro");
+    } catch (e2) {}
+  }
+
   try {
     var m = /[?&]depurar=([01])/.exec(location.search);
     if (m) localStorage.setItem("vivienda-depurar", m[1]);
