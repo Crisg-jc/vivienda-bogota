@@ -72,6 +72,8 @@ def pagina(navegador, servidor):
     pg = ctx.new_page()
     errores = []
     pg.on("pageerror", lambda e: errores.append(f"JS: {e}"))
+    # Cualquier 5xx de la API es un error de la prueba (antes un 500 de /api/tendencia pasaba sin que nadie lo viera)
+    pg.on("response", lambda r: r.status >= 500 and errores.append(f"HTTP {r.status} {r.url}"))
     pg.on("console", lambda m: m.type == "error" and "cartocdn" not in m.text and "Failed to load resource" not in m.text
           and errores.append(f"consola: {m.text}"))
     pg.base = servidor

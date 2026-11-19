@@ -13,8 +13,8 @@ Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Crist
 - **Precios por zona:** mapa real de Colombia, Bogotá y sus 20 localidades, coloreadas por el metro cuadrado mediano. Al elegir una localidad se ven el precio promedio y mediano, el precio por m² frente a Bogotá, el rango de precios, el valor estimado de un apartamento típico, los barrios y los avisos que están por debajo de lo esperado. Debajo, una comparación de todas las localidades.
 - **Actualización automática:** al abrir la aplicación arranca un ciclo que busca avisos nuevos, revisa los ya guardados (cambios de precio, características o retiro) y, si algo cambió, construye un dataset nuevo y reentrena el modelo. La página se actualiza sola.
 - **Estimar:** se describe un apartamento (área, estrato, localidad, habitaciones, baños, parqueaderos, antigüedad) y la aplicación devuelve un precio, un rango probable, el precio por metro cuadrado, qué características suben o bajan el precio y los avisos más parecidos.
-- **Mercado:** un diagrama de caja del precio por m² según estrato, la relación entre área y precio, el m² mediano por localidad y un mapa de los avisos.
-- **Avisos:** una tabla con filtros para revisar los datos uno por uno, con cuánto está cada aviso por encima o por debajo del precio que el modelo esperaba para él, y si su precio subió o bajó.
+- **Panorama:** indicadores con su periodo y su comparación (m² mediano, avisos nuevos en 7 días, bajadas de precio y retiros en 30 días, error medido de la estimación). Si la base aún no tiene historia para comparar, lo dice en vez de mostrar una variación. Debajo, un diagrama de caja del precio por m² según estrato, la relación entre área y precio, el m² mediano por localidad y un mapa de los avisos.
+- **Avisos:** una tabla con filtros (visibles como etiquetas que se quitan con un clic), orden por columna, columnas ocultables, exportación a CSV y un panel de detalle por aviso (ficha, ubicación, historial y acciones) para revisar los datos uno por uno, con cuánto está cada aviso por encima o por debajo del precio que el modelo esperaba para él, y si su precio subió o bajó.
 - **Modelo:** las métricas de validación cruzada y de la prueba final, explicadas.
 
 ## Recolector en segundo plano
@@ -246,6 +246,10 @@ La documentación interactiva está en <http://127.0.0.1:8000/docs>.
 | GET | `/api/automatizacion` | Estado del ciclo automático, conteos de la base y últimos ciclos |
 | POST | `/api/automatizacion/ejecutar` | Lanza un ciclo ahora (solo desde el mismo computador) |
 | GET | `/api/modelo` | Métricas completas del último entrenamiento |
+| GET | `/api/panorama` | Indicadores del Panorama con periodo, comparación (o el motivo por el que no se puede comparar) y error medido |
+| GET | `/api/aviso?url=` | Un aviso del corte actual por su enlace (detalle desde el mapa o las listas) |
+| GET | `/api/historia?url=` | Línea de tiempo de un aviso: visto, cambios de precio, retiro, verificaciones |
+| GET | `/api/tendencia?localidad=` | m² semana a semana, cambios de precio de 30 días y duración de los retirados |
 
 Ejemplo:
 

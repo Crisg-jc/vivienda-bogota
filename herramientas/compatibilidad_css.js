@@ -13,6 +13,8 @@ const ACEPTADAS = new Set([
   "css-clip-path", "css-masks", "css-gradients", "extended-system-fonts",
   "css-paged-media",       // solo la hoja de impresión: sin @page, el navegador usa sus márgenes
   "multicolumn",           // break-inside en impresión: una tarjeta puede partirse entre páginas
+  "css-scrollbar",         // ocultar la barra de desplazamiento del menú en tableta: si no, se ve una barra fina
+  "css3-cursors",          // cursor "no permitido" en botones deshabilitados: en táctil no hay cursor
 ]);
 const problemas = [];
 postcss([doiuse({ onFeatureUsage: (u) => { if (!ACEPTADAS.has(u.feature)) problemas.push(u.message); } })])

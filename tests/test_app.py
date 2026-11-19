@@ -237,3 +237,24 @@ def test_estimacion_mezcla_medida_y_precision_publicada(cliente):
     assert met["precision"]["muestra"] > 0 and met["precision"]["niveles"]
     assert met["por_localidad"] and "piso" in met["variables"]
     assert c.post("/api/estimar", json={"area_m2": 70, "estrato": 4, "latitud": 10.0}).status_code == 422
+
+
+def test_aviso_por_enlace(cliente):
+    c, _ = cliente
+    import app.main as principal
+    url = "https://www.fincaraiz.com.co/apartamento-en-venta-en-prueba-bogota/1"
+    principal.ESTADO["df"].at[0, "url_origen"] = url       # los datos sintéticos no traen enlaces
+    a = c.get("/api/aviso", params={"url": url}).json()
+    assert a["url_origen"] == url and "fuente" in a and a["precio"] > 0
+    assert c.get("/api/aviso", params={"url": "https://no.existe/1"}).status_code == 404
+
+
+def test_panorama(cliente):
+    c, _ = cliente
+    r = c.get("/api/panorama")
+    assert r.status_code == 200
+    p = r.json()
+    assert {"m2", "nuevos", "bajadas_precio", "retirados", "error", "semanas_m2"} <= set(p)
+    assert p["m2"]["valor"] > 0 and p["m2"]["avisos"] > 0
+    for k in ("nuevos", "bajadas_precio", "retirados"):
+        assert p[k]["comparable"] or p[k]["motivo"]      # o compara, o explica por qué no

@@ -2,6 +2,7 @@
 // diferencias de precio, m², rango, confiabilidad y características. La fijada se recuerda en este
 // navegador mientras la pestaña esté abierta.
 import { $, corto, esc, fmt, m2, NIVEL, REG } from "./base.js";
+import { toast } from "./ui.js";
 
 const CLAVE = "vivienda-comparar";
 let fijada = null;
@@ -59,6 +60,7 @@ export function iniciarComparar() {
     REG.info(fijada ? "Estimación fijada para comparar" : "Comparación quitada", fijada?.datos);
     guardar();
     pintar();
+    toast(fijada ? "Estimación fijada: cambie los datos para comparar otra al lado." : "Comparación quitada.");
   });
   pintar();
 }

@@ -125,3 +125,102 @@ def test_accesibilidad_sin_violaciones_graves(pagina):
     r = pagina.evaluate("axe.run(document, {resultTypes: ['violations']})")
     graves = [f"{v['id']}: {v['help']} ({len(v['nodes'])})" for v in r["violations"] if v["impact"] in ("serious", "critical")]
     assert graves == []
+    # También con el panel de detalle abierto (diálogo con mapa y acciones)
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    pagina.click("#a-filas tr.fila-aviso .enlace-detalle")
+    pagina.wait_for_selector("#panel:not([hidden]) .ficha")
+    r = pagina.evaluate("axe.run(document, {resultTypes: ['violations']})")
+    graves = [f"{v['id']}: {v['help']} ({len(v['nodes'])})" for v in r["violations"] if v["impact"] in ("serious", "critical")]
+    assert graves == []
+
+
+# ---------------------------------------------------------------- rediseño: navegación, tabla, panel, panorama
+
+@pytest.mark.parametrize("ancho,lateral", [(1440, True), (1024, False), (390, False)])
+def test_navegacion_lateral_o_superior_sin_desborde(pagina, ancho, lateral):
+    pagina.set_viewport_size({"width": ancho, "height": 800})
+    abrir(pagina)
+    caja = pagina.evaluate("(() => { const r = document.querySelector('.barra').getBoundingClientRect(); return [r.width, r.height]; })()")
+    assert (caja[1] > 600) == lateral, f"barra {caja} en {ancho} px"
+    assert pagina.evaluate("document.documentElement.scrollWidth") <= ancho
+    pagina.click(".barra__nav a[href='#avisos']")
+    pagina.wait_for_function("document.querySelector(\".barra__nav a[href='#avisos']\").getAttribute('aria-current') === 'true'")
+
+
+def test_tabla_de_avisos_ordena_filtra_con_chips_y_pagina(pagina):
+    abrir(pagina, "/#avisos")
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    pagina.click("button.orden[data-orden='precio_m2']")
+    pagina.wait_for_function("document.querySelector('th[data-col=m2]').getAttribute('aria-sort') === 'ascending'")
+    pagina.click("button.orden[data-orden='precio_m2']")
+    pagina.wait_for_function("document.querySelector('th[data-col=m2]').getAttribute('aria-sort') === 'descending'")
+    assert pagina.input_value("#f-orden") == "-precio_m2"
+    pagina.select_option("#f-localidad", "Suba")
+    pagina.wait_for_selector("#a-chips [data-quitar]")
+    assert "Suba" in pagina.inner_text("#a-chips")
+    pagina.click("#a-chips [data-quitar='localidad']")
+    pagina.wait_for_function("document.querySelector('#f-localidad').value === ''")
+    pagina.select_option("#a-por-pagina", "50")
+    pagina.wait_for_function("document.querySelectorAll('#a-filas tr.fila-aviso').length > 20")
+
+
+def test_columnas_se_ocultan_y_se_recuerdan(pagina):
+    abrir(pagina, "/#avisos")
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    pagina.click("#menu-columnas summary")
+    pagina.uncheck("#menu-columnas-lista input[value='barrio']")
+    assert pagina.is_hidden("#tabla-avisos th[data-col='barrio']")
+    pagina.reload(wait_until="networkidle")
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    assert pagina.is_hidden("#tabla-avisos th[data-col='barrio']")
+
+
+def test_exportar_csv_descarga_los_avisos_filtrados(pagina):
+    abrir(pagina, "/#avisos")
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    with pagina.expect_download() as d:
+        pagina.click("#a-exportar")
+    contenido = open(d.value.path(), encoding="utf-8-sig").read().splitlines()
+    assert contenido[0].startswith("Precio;") and len(contenido) > 20
+    pagina.wait_for_selector(".toast")
+
+
+def test_detalle_del_aviso_en_panel_accesible(pagina):
+    abrir(pagina, "/#avisos")
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    pagina.click("#a-filas tr.fila-aviso .enlace-detalle")
+    pagina.wait_for_selector("#panel:not([hidden]) .ficha")
+    assert pagina.evaluate("document.activeElement.closest('#panel') !== null"), "el foco debe entrar al panel"
+    assert pagina.get_attribute("#panel", "aria-modal") == "true"
+    pagina.keyboard.press("Escape")
+    pagina.wait_for_selector("#panel", state="hidden")
+    assert pagina.evaluate("document.activeElement.classList.contains('enlace-detalle')"), "el foco vuelve a la fila"
+
+
+def test_comparable_abre_su_detalle(pagina):
+    abrir(pagina)
+    pagina.click("#r-similares [data-ficha]")
+    pagina.wait_for_selector("#panel:not([hidden]) .ficha")
+    pagina.click("#panel [data-accion='estimar']")
+    pagina.wait_for_selector("#panel", state="hidden")
+
+
+def test_tabla_de_avisos_en_celular_son_tarjetas(pagina):
+    pagina.set_viewport_size({"width": 390, "height": 844})
+    abrir(pagina, "/#avisos")
+    pagina.wait_for_selector("#a-filas tr.fila-aviso")
+    assert pagina.is_hidden("#filtros"), "en celular los filtros empiezan plegados"
+    pagina.click("#f-abrir")
+    assert pagina.is_visible("#filtros")
+    assert pagina.evaluate("getComputedStyle(document.querySelector('#a-filas tr')).display") != "table-row"
+    assert pagina.evaluate("document.documentElement.scrollWidth") <= 390
+
+
+def test_panorama_muestra_indicadores_reales_sin_inventar_variaciones(pagina):
+    abrir(pagina, "/#mercado")
+    pagina.wait_for_selector("#m-kpis .kpi")
+    texto = pagina.inner_text("#m-kpis")
+    assert "Metro cuadrado mediano" in texto and "Avisos nuevos" in texto
+    # El servidor de prueba no tiene historia en la base: se dice, no se inventa un porcentaje.
+    assert "Sin historia para comparar" in texto
+    assert not re.search(r"[▲▼] \d", texto)

@@ -522,6 +522,30 @@ def vigentes(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df["url_origen"].isin(retirados)] if retirados else df
 
 
+@app.get("/api/panorama")
+def api_panorama():
+    """Indicadores del Panorama (avisos nuevos, bajadas de precio, retiros, m² y error medido) con su periodo."""
+    listo()
+    from . import historial
+    clave = ("panorama", dt.datetime.now().strftime("%Y%m%d%H"), ESTADO["huella"], TRAZA["resumen"].get("ultima_verificacion"), len(TRAZA["por_url"]))
+    if clave not in _TENDENCIAS:
+        if len(_TENDENCIAS) > 60:
+            _TENDENCIAS.clear()
+        _TENDENCIAS[clave] = historial.panorama(motor_bd(), D.utiles(vigentes(ESTADO["df"])), ESTADO["metricas"])
+    return _TENDENCIAS[clave]
+
+
+@app.get("/api/aviso")
+def api_aviso(url: str = Query(..., max_length=500)):
+    """Un aviso por su enlace (para abrir su detalle desde el mapa o desde una lista)."""
+    listo()
+    df = ESTADO["df"]
+    fila = df[df["url_origen"] == url]
+    if fila.empty:
+        raise HTTPException(404, "Ese aviso no está en el corte actual de datos.")
+    return aviso(fila.iloc[0].to_dict())
+
+
 @app.get("/api/historia")
 def api_historia(url: str = Query(..., max_length=500)):
     """Línea de tiempo de un aviso: publicación, primera vez visto, cambios, retiro y verificación."""

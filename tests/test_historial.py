@@ -57,3 +57,39 @@ def test_sin_semanas_suficientes_no_hay_tendencia(tmp_path, monkeypatch):
     eng, df, _ = _base(tmp_path, monkeypatch, semanas=2)
     t = historial.tendencia(eng, df, "Suba")
     assert not t["suficiente"] and t["variacion_m2"] is None
+
+
+def test_tendencia_con_enlaces_vacios_no_falla(tmp_path, monkeypatch):
+    """Regresión: url_origen vacía (NaN) en el corte hacía fallar /api/tendencia con un 500."""
+    eng, df, _ = _base(tmp_path, monkeypatch)
+    df = pd.concat([df, pd.DataFrame({"url_origen": [float("nan")] * 3, "localidad": "Suba", "precio_m2": 5e6})])
+    assert historial.tendencia(eng, df, "Suba")["suficiente"]
+    vacio = pd.DataFrame({"url_origen": [float("nan")] * 3, "localidad": "Suba", "precio_m2": 5e6})
+    assert historial.tendencia(eng, vacio, "Suba")["suficiente"] is False
+
+
+def test_panorama_compara_solo_con_historia_suficiente(tmp_path, monkeypatch):
+    """Los indicadores del Panorama salen de la base; sin historia no se inventa una variación."""
+    eng, df, _ = _base(tmp_path, monkeypatch, semanas=4)
+    p = historial.panorama(eng, df, {"precision": {"niveles": {"alta": {"n": 3, "error_mezcla": 0.1},
+                                                                  "media": {"n": 1, "error_mezcla": 0.2}}}})
+    # 4 semanas de recolección: alcanza para comparar 7 días contra los 7 anteriores, no 30 contra 30.
+    assert p["nuevos"]["comparable"] and p["nuevos"]["previo"] is not None
+    assert p["bajadas_precio"]["valor"] == 1 and p["bajadas_precio"]["comparable"] is False
+    assert p["bajadas_precio"]["previo"] is None and "60 días" in p["bajadas_precio"]["motivo"]
+    assert p["m2"]["comparable"] is False and p["m2"]["variacion"] is None and p["m2"]["motivo"]
+    assert abs(p["error"]["valor"] - 0.125) < 1e-9 and p["error"]["muestra"] == 4
+
+
+def test_panorama_con_ocho_semanas_compara_el_m2(tmp_path, monkeypatch):
+    eng, df, _ = _base(tmp_path, monkeypatch, semanas=8)
+    p = historial.panorama(eng, df, None)
+    assert p["m2"]["comparable"] and p["m2"]["variacion"] > 0     # los m² del ejemplo suben semana a semana
+    assert p["error"] is None and len(p["semanas_m2"]) >= 7
+
+
+def test_panorama_sin_base(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/v.db")
+    p = historial.panorama(db.motor(), pd.DataFrame({"url_origen": [], "precio_m2": []}), None)
+    assert p["nuevos"]["valor"] == 0 and p["nuevos"]["comparable"] is False
+    assert p["nuevos"]["motivo"] == "La base todavía no tiene avisos con fecha."

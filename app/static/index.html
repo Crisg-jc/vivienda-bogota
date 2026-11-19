@@ -21,18 +21,23 @@
       <span>Vivienda Bogotá</span>
     </a>
     <nav class="barra__nav" aria-label="Secciones">
-      <a href="#estimar">Estimar</a>
-      <a href="#zonas">Zonas</a>
-      <a href="#mercado">Mercado</a>
-      <a href="#avisos">Avisos</a>
-      <a href="#modelo">Modelo</a>
+      <a href="#estimar"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h12v13H4z"/><path d="M6.5 6.5h7M7 10h.01M10 10h.01M13 10h.01M7 13h.01M10 13h.01M13 13h.01"/></svg><span>Estimar</span></a>
+      <a href="#zonas"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3.5 3 5v11.5l4-1.5 6 2 4-1.5V4l-4 1.5z"/><path d="M7 3.5v11.5M13 5.5V17"/></svg><span>Zonas</span></a>
+      <a href="#mercado"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 16.5h13"/><path d="M6 13.5V9M10 13.5V5.5M14 13.5v-6"/></svg><span>Panorama</span></a>
+      <a href="#avisos"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5.5h9M7.5 10h9M7.5 14.5h9"/><path d="M3.5 5.5h.01M3.5 10h.01M3.5 14.5h.01"/></svg><span>Avisos</span></a>
+      <a href="#actualizacion"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.8 8.2A6 6 0 0 0 4.6 7"/><path d="M4.2 11.8A6 6 0 0 0 15.4 13"/><path d="M15.9 4.2v4h-4M4.1 15.8v-4h4"/></svg><span>Actualización</span></a>
+      <a href="#modelo"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="M10 10 13 7"/><path d="M10 3.5V5M3.5 10H5M15 10h1.5"/></svg><span>Modelo</span></a>
     </nav>
-    <a class="barra__datos" id="insignia-datos" href="#actualizacion"><span class="pulso" aria-hidden="true"></span><span id="insignia-texto">Cargando datos…</span></a>
-    <button class="boton-tema" id="cambiar-tema" type="button" aria-pressed="false">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" fill="currentColor"/></svg>
-      <span id="tema-texto">Modo oscuro</span>
-    </button>
+    <div class="barra__pie">
+      <a class="barra__datos" id="insignia-datos" href="#actualizacion"><span class="pulso" aria-hidden="true"></span><span id="insignia-texto">Cargando datos…</span></a>
+      <button class="boton-tema" id="cambiar-tema" type="button" aria-pressed="false">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" fill="currentColor"/></svg>
+        <span id="tema-texto">Modo oscuro</span>
+      </button>
+    </div>
   </header>
+
+  <div class="marco-app">
 
   <details class="aviso-demo" id="aviso-demo" hidden>
     <summary><strong>Datos de demostración.</strong> Las cifras de esta página no describen el mercado real.</summary>
@@ -198,7 +203,7 @@
           <p class="como-leer" id="r-comparables-guia">Los apartamentos reales más parecidos al suyo, de los que sale el precio. Son los círculos de la cinta.</p>
           <div class="desliza" tabindex="0" role="region" aria-label="Tabla de avisos parecidos">
             <table class="tabla tabla--compacta">
-              <thead><tr><th>Precio</th><th>Por m²</th><th>Área</th><th>Estrato</th><th>Localidad</th><th>Fuente</th><th><span class="sr">Enlace</span></th></tr></thead>
+              <thead><tr><th scope="col">Precio</th><th scope="col">Por m²</th><th scope="col">Área</th><th scope="col">Hab.</th><th scope="col">Estrato</th><th scope="col">Localidad</th><th scope="col">Barrio</th><th scope="col">Fuente</th><th><span class="sr">Enlace</span></th></tr></thead>
               <tbody id="r-similares"></tbody>
             </table>
           </div>
@@ -228,7 +233,7 @@
             <div class="escala-mapa">
               <span>Metro cuadrado mediano</span>
               <span id="z-escala-min"></span><i aria-hidden="true"></i><span id="z-escala-max"></span>
-              <span class="sin-datos"><i aria-hidden="true"></i>Pocos avisos</span>
+              <span class="escala-mapa__pocos"><i aria-hidden="true"></i>Pocos avisos</span>
             </div>
             <div class="leyenda" id="z-leyenda-puntos">
               <span><i class="pt pt--debajo"></i>Por debajo de lo esperado</span>
@@ -279,6 +284,11 @@
         <h2 class="seccion__titulo" id="t-mercado">Lo que muestran los avisos</h2>
         <p class="seccion__entrada" id="m-resumen">Cargando…</p>
       </header>
+      <h3 class="sr">Indicadores del mercado</h3>
+      <div class="kpis" id="m-kpis" aria-live="polite">
+        <span class="esqueleto" style="height:7.5rem"></span><span class="esqueleto" style="height:7.5rem"></span>
+        <span class="esqueleto" style="height:7.5rem"></span><span class="esqueleto" style="height:7.5rem"></span>
+      </div>
 
       <div class="graficos">
         <figure class="grafico grafico--completo">
@@ -302,40 +312,72 @@
         <h2 class="seccion__titulo" id="t-avisos">Explorar los avisos</h2>
         <p class="seccion__entrada">Revise uno por uno los avisos con los que se entrenó el modelo. "Frente a lo esperado" compara el precio pedido con lo que el modelo estima para ese apartamento sin haberlo visto: más de 10 % por debajo o por encima.</p>
       </header>
-      <form class="filtros" id="filtros">
-        <label>Localidad
-          <select name="localidad" id="f-localidad"><option value="">Todas</option></select>
-        </label>
-        <label>Estrato
-          <select name="estrato"><option value="">Todos</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
-        </label>
-        <label>Precio máximo
-          <select name="precio_max"><option value="">Sin límite</option><option value="300000000">$300 millones</option><option value="500000000">$500 millones</option><option value="800000000">$800 millones</option><option value="1200000000">$1.200 millones</option></select>
-        </label>
-        <label>Área mínima
-          <select name="area_min"><option value="">Cualquiera</option><option value="40">40 m²</option><option value="60">60 m²</option><option value="80">80 m²</option><option value="120">120 m²</option></select>
-        </label>
-        <label>Frente a lo esperado
-          <select name="comparacion"><option value="">Todos</option><option value="debajo">Por debajo</option><option value="en_linea">En línea</option><option value="encima">Por encima</option></select>
-        </label>
-        <label>Ordenar por
-          <select name="orden"><option value="precio">Precio, de menor a mayor</option><option value="diferencia_pct">Más por debajo de lo esperado</option><option value="-precio">Precio, de mayor a menor</option><option value="precio_m2">Metro cuadrado, de menor a mayor</option><option value="-precio_m2">Metro cuadrado, de mayor a menor</option><option value="-area_m2">Área, de mayor a menor</option></select>
-        </label>
-      </form>
-      <div class="conteo">
-        <p id="a-conteo" aria-live="polite"></p>
-        <button class="boton-texto" id="a-limpiar" type="button" hidden>Quitar filtros</button>
+      <div class="tabla-barra">
+        <button class="boton-secundario filtros-abrir" id="f-abrir" type="button" aria-expanded="false" aria-controls="filtros">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5h13M6 10h8M8.5 15h3"/></svg>Filtros <span id="f-cuenta"></span>
+        </button>
+        <form class="filtros" id="filtros">
+          <label>Localidad
+            <select name="localidad" id="f-localidad"><option value="">Todas</option></select>
+          </label>
+          <label>Barrio
+            <input name="barrio" id="f-barrio" list="barrios-lista" placeholder="Todos" autocomplete="off">
+          </label>
+          <label>Estrato
+            <select name="estrato"><option value="">Todos</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+          </label>
+          <label>Precio máximo
+            <select name="precio_max"><option value="">Sin límite</option><option value="300000000">$300 millones</option><option value="500000000">$500 millones</option><option value="800000000">$800 millones</option><option value="1200000000">$1.200 millones</option></select>
+          </label>
+          <label>Área mínima
+            <select name="area_min"><option value="">Cualquiera</option><option value="40">40 m²</option><option value="60">60 m²</option><option value="80">80 m²</option><option value="120">120 m²</option></select>
+          </label>
+          <label>Frente a lo esperado
+            <select name="comparacion"><option value="">Todos</option><option value="debajo">Por debajo</option><option value="en_linea">En línea</option><option value="encima">Por encima</option></select>
+          </label>
+          <label>Ordenar por
+            <select name="orden" id="f-orden"><option value="precio">Precio, de menor a mayor</option><option value="-precio">Precio, de mayor a menor</option><option value="diferencia_pct">Más por debajo de lo esperado</option><option value="-diferencia_pct">Más por encima de lo esperado</option><option value="precio_m2">Metro cuadrado, de menor a mayor</option><option value="-precio_m2">Metro cuadrado, de mayor a menor</option><option value="area_m2">Área, de menor a mayor</option><option value="-area_m2">Área, de mayor a menor</option></select>
+          </label>
+        </form>
+        <datalist id="barrios-lista"></datalist>
       </div>
-      <div class="tabla-marco" tabindex="0" role="region" aria-label="Tabla de avisos">
-        <table class="tabla">
-          <thead><tr><th>Precio</th><th>Frente a lo esperado</th><th>Por m²</th><th>Área</th><th>Hab.</th><th>Baños</th><th>Estrato</th><th>Localidad</th><th>Barrio</th><th>Fuente y verificación</th><th><span class="sr">Enlace</span></th></tr></thead>
+
+      <div class="tabla-herramientas">
+        <div class="tabla-herramientas__estado">
+          <p id="a-conteo" aria-live="polite"></p>
+          <div class="chips" id="a-chips" role="group" aria-label="Filtros activos"></div>
+        </div>
+        <div class="tabla-herramientas__acciones">
+          <label class="por-pagina">Por página
+            <select id="a-por-pagina"><option>20</option><option>50</option><option>100</option></select>
+          </label>
+          <details class="menu-columnas" id="menu-columnas">
+            <summary class="boton-fantasma"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4h4v12H4zM12 4h4v12h-4z"/></svg>Columnas</summary>
+            <div class="menu-columnas__lista" id="menu-columnas-lista"></div>
+          </details>
+          <button class="boton-secundario" id="a-exportar" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v9M6.5 9 10 12.5 13.5 9M4 15.5h12"/></svg>Exportar CSV</button>
+        </div>
+      </div>
+
+      <div class="tabla-marco tabla-marco--fija" tabindex="0" role="region" aria-label="Tabla de avisos">
+        <table class="tabla tabla-avisos" id="tabla-avisos">
+          <caption class="sr">Avisos de apartamentos en venta. Toque una fila para ver su detalle.</caption>
+          <thead><tr>
+            <th data-col="precio" aria-sort="ascending"><button class="orden" type="button" data-orden="precio">Precio<i aria-hidden="true"></i></button></th>
+            <th data-col="cmp" aria-sort="none"><button class="orden" type="button" data-orden="diferencia_pct">Frente a lo esperado<i aria-hidden="true"></i></button></th>
+            <th data-col="m2" class="num" aria-sort="none"><button class="orden" type="button" data-orden="precio_m2">Por m²<i aria-hidden="true"></i></button></th>
+            <th data-col="area" class="num" aria-sort="none"><button class="orden" type="button" data-orden="area_m2">Área<i aria-hidden="true"></i></button></th>
+            <th data-col="hab" class="num">Hab.</th><th data-col="banos" class="num">Baños</th><th data-col="estrato">Estrato</th>
+            <th data-col="localidad">Localidad</th><th data-col="barrio">Barrio</th><th data-col="fuente">Fuente y verificación</th>
+            <th data-col="enlace"><span class="sr">Enlace al portal</span></th>
+          </tr></thead>
           <tbody id="a-filas"></tbody>
         </table>
       </div>
       <div class="paginas">
-        <button class="boton boton--sutil" id="a-anterior" type="button">Anteriores</button>
+        <button class="boton-secundario" id="a-anterior" type="button">Anteriores</button>
         <span id="a-pagina"></span>
-        <button class="boton boton--sutil" id="a-siguiente" type="button">Siguientes</button>
+        <button class="boton-secundario" id="a-siguiente" type="button">Siguientes</button>
       </div>
     </section>
 
@@ -399,6 +441,7 @@
     <p>Proyecto de Electiva II, Universidad ECCI. Diego Alejandro Galicia Forero, Cristian Javier Gómez Castañeda y Camila Andrea Vanegas Ducuara.</p>
     <p>Las estimaciones son referencias del precio de publicación y no reemplazan un avalúo comercial. Código bajo licencia MIT. <a href="/docs">Documentación de la API</a>.</p>
   </footer>
+  </div>
 
   <!-- En el celular: el precio sigue visible mientras se ajusta el formulario -->
   <aside aria-label="Precio estimado">
@@ -410,6 +453,17 @@
   </aside>
 
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+
+  <div class="avisos-toast" id="toasts" role="status" aria-live="polite"></div>
+
+  <div class="panel-fondo" id="panel-fondo" hidden></div>
+  <aside class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="panel-titulo" hidden tabindex="-1">
+    <header class="panel__cabeza">
+      <h2 id="panel-titulo">Detalle</h2>
+      <button class="boton-icono" id="panel-cerrar" type="button" aria-label="Cerrar el detalle"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"/></svg></button>
+    </header>
+    <div class="panel__cuerpo" id="panel-cuerpo"></div>
+  </aside>
 
   <script src="/static/vendor/leaflet/leaflet.js" defer></script>
   <script src="/static/app.js" type="module"></script>

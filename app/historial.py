@@ -88,7 +88,15 @@ def tendencia(eng, df: pd.DataFrame, localidad: str | None) -> dict:
     g = df if not localidad else df[df["localidad"] == localidad]
     zona = localidad or "Bogotá"
     if g.empty or fechas.empty:
-        return {"zona": zona, "suficiente": False, "semanas": [], "mensaje": "Sin avisos en esta zona."}
+        motivo = "no hay avisos en esta zona." if g.empty else "la base aún no tiene fechas de recolección de estos avisos."
+        return {"zona": zona, "suficiente": False, "semanas": [], "mensaje": motivo,
+                "minimo_semanas": SEMANAS_MINIMAS, "minimo_por_semana": AVISOS_POR_SEMANA}
+    # url_origen puede venir vacía (float NaN en pandas) en cortes viejos o importados: se compara como texto
+    g = g.dropna(subset=["url_origen"]).assign(url_origen=lambda x: x["url_origen"].astype(str))
+    fechas = fechas.assign(url_origen=fechas["url_origen"].astype(str))
+    if g.empty:
+        return {"zona": zona, "suficiente": False, "semanas": [], "mensaje": "los avisos de esta zona no tienen enlace.",
+                "minimo_semanas": SEMANAS_MINIMAS, "minimo_por_semana": AVISOS_POR_SEMANA}
     m = g[["url_origen", "precio_m2"]].merge(fechas, on="url_origen", how="left")
     m["visto"] = pd.to_datetime(m["primera_vez"]).fillna(pd.to_datetime(m["fecha_consulta"]))
     m = m.dropna(subset=["visto"])
@@ -116,3 +124,82 @@ def tendencia(eng, df: pd.DataFrame, localidad: str | None) -> dict:
             "cambios_30_dias": {"n": int(len(cz)), "bajadas": int((cz["var"] < 0).sum()), "subidas": int((cz["var"] > 0).sum()),
                                 "variacion_mediana": float(cz["var"].median()) if len(cz) else None},
             "retirados": {"n": int(len(ret)), "dias_mediana": float(ret["dias"].median()) if len(ret) else None}}
+
+
+MINIMO_COMPARAR_M2 = 10   # avisos por ventana para comparar el m² mediano entre dos periodos
+
+
+def panorama(eng, df: pd.DataFrame, metricas: dict | None, ahora: dt.datetime | None = None) -> dict:
+    """Indicadores del mercado para la cabecera del Panorama, cada uno con su periodo y su comparación.
+
+    Sólo usa lo que está guardado: avisos del dataset (sin atípicos), fechas de la base (primera vez
+    visto, retiros) y la tabla de cambios. Cuando no hay historia suficiente para comparar se dice así
+    (``comparable: False`` y un motivo) en vez de inventar una variación.
+    """
+    ahora = ahora or dt.datetime.now()
+    t = db.inmuebles_crudos.c
+    with eng.begin() as cx:
+        fechas = pd.DataFrame(cx.execute(select(t.url_origen, t.primera_vez, t.fecha_consulta, t.retirado_en,
+                                                t.disponible)).all(),
+                              columns=["url_origen", "primera_vez", "fecha_consulta", "retirado_en", "disponible"])
+        cambios = pd.DataFrame(cx.execute(select(db.cambios.c.fecha, db.cambios.c.antes, db.cambios.c.despues)
+                                          .where(db.cambios.c.campo == "precio")).all(),
+                               columns=["fecha", "antes", "despues"])
+    visto = pd.to_datetime(fechas["primera_vez"]).fillna(pd.to_datetime(fechas["fecha_consulta"]))
+
+    def ventana(serie: pd.Series, dias: int) -> tuple[int, int]:
+        s = pd.to_datetime(serie).dropna()
+        actual = int(((s > ahora - dt.timedelta(days=dias)) & (s <= ahora)).sum())
+        previa = int(((s > ahora - dt.timedelta(days=2 * dias)) & (s <= ahora - dt.timedelta(days=dias))).sum())
+        return actual, previa
+
+    def indicador(actual: int, previa: int, dias: int, desde) -> dict:
+        # Sin registros anteriores al periodo previo no se sabe si "0 antes" es real o falta de historia.
+        hay_historia = desde is not None and desde <= ahora - dt.timedelta(days=2 * dias)
+        return {"valor": actual, "previo": previa if hay_historia else None, "dias": dias, "comparable": bool(hay_historia),
+                "motivo": None if hay_historia else (
+                    "La base todavía no tiene avisos con fecha." if desde is None
+                    else f"La base registra avisos desde hace menos de {2 * dias} días.")}
+
+    desde = visto.min() if len(visto.dropna()) else None
+    desde = desde.to_pydatetime() if desde is not None and not pd.isna(desde) else None
+
+    nuevos = indicador(*ventana(visto, 7), 7, desde)
+    retirados = indicador(*ventana(fechas.loc[fechas["disponible"] == False, "retirado_en"], 30), 30, desde)  # noqa: E712
+    if len(cambios):
+        var = np.array([(nz.precio(d) or np.nan) / (nz.precio(a) or np.nan) - 1
+                        for a, d in zip(cambios["antes"], cambios["despues"], strict=True)])
+        bajadas = cambios.loc[var < 0, "fecha"]
+    else:
+        bajadas = pd.Series([], dtype="datetime64[ns]")
+    bajadas = indicador(*ventana(bajadas, 30), 30, desde)
+
+    # m² mediano: hoy (todo el corte) y, si alcanza, avisos vistos en los últimos 28 días frente a los 28 anteriores.
+    util = df.dropna(subset=["url_origen"]).assign(url_origen=lambda x: x["url_origen"].astype(str))
+    f = fechas.assign(url_origen=fechas["url_origen"].astype(str), visto=visto)[["url_origen", "visto"]]
+    m = util[["url_origen", "precio_m2"]].merge(f, on="url_origen", how="inner").dropna(subset=["visto"])
+    recientes = m[m["visto"] > ahora - dt.timedelta(days=28)]["precio_m2"]
+    anteriores = m[(m["visto"] > ahora - dt.timedelta(days=56)) & (m["visto"] <= ahora - dt.timedelta(days=28))]["precio_m2"]
+    alcanza = len(recientes) >= MINIMO_COMPARAR_M2 and len(anteriores) >= MINIMO_COMPARAR_M2
+    m2 = {"valor": float(df["precio_m2"].median()) if len(df) else None, "avisos": int(len(df)),
+          "comparable": bool(alcanza),
+          "recientes": {"n": int(len(recientes)), "mediana": float(recientes.median()) if len(recientes) else None},
+          "anteriores": {"n": int(len(anteriores)), "mediana": float(anteriores.median()) if len(anteriores) else None},
+          "variacion": float(recientes.median() / anteriores.median() - 1) if alcanza else None,
+          "motivo": None if alcanza else (f"Para comparar se necesitan {MINIMO_COMPARAR_M2} avisos nuevos en cada periodo de 28 días "
+                                          f"(hay {len(recientes)} recientes y {len(anteriores)} anteriores).")}
+    semanas = []
+    if len(m):
+        s = m.assign(semana=m["visto"].dt.to_period("W-SUN").dt.start_time).groupby("semana")["precio_m2"]
+        semanas = [{"semana": k.date().isoformat(), "n": int(v.size), "mediana_m2": float(v.median())}
+                   for k, v in s if v.size >= AVISOS_POR_SEMANA][-12:]
+
+    error = None
+    p = (metricas or {}).get("precision") or {}
+    niveles = [v for v in (p.get("niveles") or {}).values() if v.get("n") and v.get("error_mezcla") is not None]
+    if niveles:
+        n = sum(v["n"] for v in niveles)
+        error = {"valor": sum(v["error_mezcla"] * v["n"] for v in niveles) / n, "muestra": int(n),
+                 "fecha": (metricas or {}).get("fecha")}
+    return {"fecha": ahora.isoformat(timespec="seconds"), "desde": _fecha(desde), "m2": m2, "semanas_m2": semanas,
+            "nuevos": nuevos, "bajadas_precio": bajadas, "retirados": retirados, "error": error}

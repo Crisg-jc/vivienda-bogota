@@ -1,23 +1,10 @@
-import { api, esc, fechaDia, fmt, m2, REG } from "./base.js";
+import { esc, fechaDia, fmt, m2 } from "./base.js";
 
-export async function mostrarHistoria(boton) {
-  const fila = boton.closest("tr");
-  const abierta = fila.nextElementSibling?.classList.contains("fila-historia");
-  if (abierta) { fila.nextElementSibling.remove(); boton.setAttribute("aria-expanded", "false"); return; }
-  boton.setAttribute("aria-expanded", "true");
-  const extra = document.createElement("tr");
-  extra.className = "fila-historia";
-  extra.innerHTML = `<td colspan="${fila.children.length}">Cargando historial…</td>`;
-  fila.after(extra);
-  try {
-    const h = await api(`/api/historia?url=${encodeURIComponent(boton.dataset.url)}`);
-    REG.debug("Historial de un aviso", h);
-    extra.firstElementChild.innerHTML = `<ol class="linea-tiempo">${h.eventos.map((e) => `<li class="ev ev--${esc(e.tipo)}">
-        <time>${e.fecha ? fechaDia(e.fecha) : "—"}</time> ${esc(e.texto || e.tipo)}</li>`).join("")}</ol>
-      <p class="como-leer">${h.dias_publicado != null ? `${h.disponible ? "Lleva" : "Estuvo"} ${fmt.format(h.dias_publicado)} días publicado (desde la ${esc(h.desde_fuente)}).` : ""}</p>`;
-  } catch (e) {
-    extra.firstElementChild.textContent = `No se pudo leer el historial: ${e.message}`;
-  }
+// Línea de tiempo de un aviso (/api/historia), para el panel de detalle.
+export function historiaHTML(h) {
+  return `<ol class="linea-tiempo">${h.eventos.map((e) => `<li class="ev ev--${esc(e.tipo)}">
+      <time>${e.fecha ? fechaDia(e.fecha) : "—"}</time> ${esc(e.texto || e.tipo)}</li>`).join("")}</ol>
+    <p class="como-leer">${h.dias_publicado != null ? `${h.disponible ? "Lleva" : "Estuvo"} ${fmt.format(h.dias_publicado)} días publicado (desde la ${esc(h.desde_fuente)}).` : ""}</p>`;
 }
 
 export function lineaTendencia(semanas) {

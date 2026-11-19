@@ -79,6 +79,9 @@ def cargar(ruta: pathlib.Path) -> pd.DataFrame:
     for c in ["localidad", "barrio", "url_origen", "portal", "atipico"]:
         if c not in df.columns:
             df[c] = None
+        # Una columna de texto toda vacía llega como float (NaN): se fuerza a texto para que los cruces
+        # por enlace y los filtros por barrio no fallen (regresión: 500 en /api/tendencia).
+        df[c] = df[c].astype(object).where(df[c].notna(), None)
     df["atipico"] = df["atipico"].where(df["atipico"].notna() & (df["atipico"].astype(str) != ""), None)
     if "proyecto" in df.columns and df["proyecto"].notna().any():
         df["proyecto"] = df["proyecto"].map(lambda v: 1.0 if str(v).strip().lower() in ("true", "1", "1.0") else 0.0)

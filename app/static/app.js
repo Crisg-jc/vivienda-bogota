@@ -1,12 +1,15 @@
 // Vivienda Bogotá: interfaz sin dependencias (salvo Leaflet para el mapa). Este archivo arma la página;
 // las utilidades y partes independientes están en js/.
 import { $, api, teselas, tono, area, corto, diaLargo, el, esc, fechaCorta, fechaLarga, fmt, fmt1, haceCuanto, hora, m2, millones, NIVEL, NOMBRE_PORTAL, pct, pctEntero, pctTexto, reducirMovimiento, REG, RESULTADOS, seguro, ultimo, urlSegura } from "./js/base.js";
-import { lineaTendencia, mostrarHistoria } from "./js/historial.js";
+import { historiaHTML, lineaTendencia } from "./js/historial.js";
+import { columnasVisibles, descargarCSV, marcarOrden, traerTodo } from "./js/tabla.js";
+import { abrirPanel, cerrarPanel, copiar, iniciarPanel, ocupado, toast } from "./js/ui.js";
 import { mezclaTexto, pintarPrecision } from "./js/precision.js";
 import { actualizarComparacion, iniciarComparar } from "./js/comparar.js";
 import { iniciarImpresion } from "./js/imprimir.js";
 import { iniciarTema } from "./js/tema.js";
 
+const FICHAS = { similares: [], debajo: [] };   // avisos pintados en listas cortas, para abrir su detalle con data-ficha="grupo:i"
 let ULTIMO = null;     // última estimación pintada: la usan comparar e imprimir
 
 const COLOR_ESTRATO = [null, "--e1", "--e2", "--e3", "--e4", "--e5", "--e6"]
@@ -91,6 +94,7 @@ function avisoEnSeccion(selector, que) {
 async function iniciar() {
   const t = REG.tiempo("Arranque de la página");
   iniciarTema();
+  iniciarPanel();
   iniciarComparar();
   iniciarImpresion(() => ({ datos: ULTIMO ? ULTIMO.datos : leerFormulario(), dataset: ESTADO?.dataset, verificacion: ESTADO?.verificacion }));
   REG.debug("Leaflet disponible", { leaflet: Boolean(window.L), version: window.L?.version });
@@ -539,9 +543,74 @@ function chipEstrato(e) {
 }
 
 function pintarSimilares(lista) {
-  $("#r-similares").innerHTML = lista.map((s) => `<tr>
-    <td>${corto(s.precio)}</td><td>${m2(s.precio_m2)}</td><td>${area(s.area_m2)}</td><td>${chipEstrato(s.estrato)}</td>
-    <td>${esc(s.localidad ?? "—")}</td><td>${celdaFuente(s)}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
+  // El precio abre el detalle del aviso (panel lateral): así se ve completo sin salir de la página.
+  FICHAS.similares = lista;
+  $("#r-similares").innerHTML = lista.map((s, i) => `<tr>
+    <td><button class="enlace-detalle" type="button" data-ficha="similares:${i}" aria-label="Ver detalle del comparable de ${corto(s.precio)}">${corto(s.precio)}</button></td>
+    <td>${m2(s.precio_m2)}</td><td>${area(s.area_m2)}</td><td>${s.habitaciones ?? "—"}</td><td>${chipEstrato(s.estrato)}</td>
+    <td>${esc(s.localidad ?? "—")}</td><td>${esc(s.barrio || "—")}</td><td>${celdaFuente(s)}</td><td>${enlaceAviso(s.url_origen)}</td></tr>`).join("");
+}
+
+// ---------------------------------------------------------------- panorama (indicadores)
+// Cada indicador dice su periodo y con qué se compara. Si la base no tiene historia suficiente para
+// comparar, se dice así en lugar de mostrar una variación inventada.
+function variacionKPI(actual, previo, comparable, motivo, unidad = "") {
+  if (!comparable || previo == null) {
+    if (motivo) variacionKPI.motivos.add(motivo);
+    return `<span class="kpi__variacion" data-sentido="sin">Sin historia para comparar</span>`;
+  }
+  const dif = actual - previo;
+  const flecha = dif > 0 ? "▲" : dif < 0 ? "▼" : "=";
+  const texto = previo > 0 ? `${flecha} ${fmt.format(Math.abs(Math.round((dif / previo) * 100)))} %` : `${flecha} ${fmt.format(Math.abs(dif))}${unidad}`;
+  return `<span class="kpi__variacion" data-sentido="neutro" aria-label="${dif > 0 ? "Sube" : dif < 0 ? "Baja" : "Igual"} frente al periodo anterior">${texto}</span>`;
+}
+
+variacionKPI.motivos = new Set();   // un mismo motivo se explica una sola vez, debajo de los indicadores
+
+function lineaKPI(valores) {
+  if (valores.length < 2) return "";
+  const min = Math.min(...valores), max = Math.max(...valores), r = max - min || 1;
+  const pts = valores.map((v, i) => `${(i / (valores.length - 1)) * 100},${28 - ((v - min) / r) * 24}`).join(" ");
+  return `<svg class="kpi__linea" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+}
+
+async function cargarPanorama() {
+  const caja = $("#m-kpis");
+  let p;
+  try { p = await api("/api/panorama"); } catch (e) {
+    caja.innerHTML = `<p class="como-leer">No se pudieron calcular los indicadores: ${esc(e.message)}</p>`;
+    return;
+  }
+  const t = REG.tiempo("Pintar panorama");
+  variacionKPI.motivos.clear();
+  const kpi = (nombre, valor, unidad, periodo, extra, linea = "") => `<article class="kpi">
+      <h4 class="kpi__nombre">${nombre}</h4>
+      <p class="kpi__valor">${valor}${unidad ? `<span class="kpi__unidad">${unidad}</span>` : ""}</p>
+      <p class="kpi__contexto">${periodo}</p>${extra}${linea}</article>`;
+  const m = p.m2;
+  const n = p.nuevos, b = p.bajadas_precio, r = p.retirados;
+  const tarjetas = [
+    kpi("Metro cuadrado mediano", m.valor != null ? m2(m.valor) : "—", "", `De ${fmt.format(m.avisos)} avisos del corte actual (sin atípicos).`,
+      m.comparable
+        ? `${variacionKPI(m.recientes.mediana, m.anteriores.mediana, true)}<span class="kpi__contexto">Avisos nuevos de los últimos 28 días (${fmt.format(m.recientes.n)}) frente a los 28 anteriores (${fmt.format(m.anteriores.n)}).</span>`
+        : variacionKPI(null, null, false, m.motivo),
+      lineaKPI(p.semanas_m2.map((s) => s.mediana_m2))),
+    kpi("Avisos nuevos", fmt.format(n.valor), "", `Encontrados por primera vez en los últimos ${n.dias} días.`,
+      variacionKPI(n.valor, n.previo, n.comparable, n.motivo)),
+    kpi("Bajadas de precio", fmt.format(b.valor), "", `Avisos que bajaron su precio en los últimos ${b.dias} días.`,
+      variacionKPI(b.valor, b.previo, b.comparable, b.motivo)),
+    kpi("Avisos retirados", fmt.format(r.valor), "", `Ya no están en el portal; últimos ${r.dias} días.`,
+      variacionKPI(r.valor, r.previo, r.comparable, r.motivo)),
+  ];
+  if (p.error) {
+    tarjetas.push(kpi("Error típico de la estimación", fmt1.format(p.error.valor * 100), "%",
+      `Diferencia típica entre lo estimado y lo pedido en ${fmt.format(p.error.muestra)} avisos reales estimados como si fueran nuevos (mediana de cada nivel de confiabilidad, ponderada).`,
+      `<a class="kpi__contexto" href="#modelo">Cómo se midió</a>`));
+  }
+  const motivos = [...variacionKPI.motivos];
+  caja.innerHTML = tarjetas.join("") + (motivos.length
+    ? `<p class="como-leer kpis__nota">Sin historia para comparar: ${motivos.map((x) => esc(x)).join(" ")} Las comparaciones aparecen solas a medida que el recolector guarda avisos con fecha.</p>` : "");
+  t.fin({ indicadores: tarjetas.length });
 }
 
 // ---------------------------------------------------------------- mercado
@@ -557,7 +626,9 @@ async function cargarMercado() {
     $("#g-cajas").insertAdjacentHTML("afterend", `<p class="como-leer nota-omitidos">No se dibuja caja para los estratos con menos de 3 avisos: ${lista}. Entre paréntesis, cuántos avisos hay.</p>`);
   }
   pintarDispersion(m.dispersion);
+  cargarPanorama();
   MERCADO = m;
+  actualizarBarrios();
   if (!cargarMercado.conResize) {
     cargarMercado.conResize = true;
     let ultimoAncho = innerWidth, espera;
@@ -818,7 +889,7 @@ function popupAviso(p) {
   const lugar = [p.barrio, p.localidad].filter(Boolean).map(esc).join(", ");
   return `<strong>${corto(p.precio)}</strong> ${chipComparacion({ ...p, precio_esperado: p.precio / (1 + p.diferencia_pct) })}<br>
     ${area(p.area)}, ${m2(p.m2)} por m²${p.estrato ? `, estrato ${p.estrato}` : ""}${lugar ? `<br>${lugar}` : ""}
-    ${url ? `<br><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Ver aviso</a>` : ""}`;
+    ${url ? `<br><button class="boton-texto" type="button" data-detalle-url="${esc(url)}">Ver detalle</button> · <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Ver en el portal</a>` : ""}`;
 }
 
 function visibilidadPorZoom() {
@@ -853,6 +924,7 @@ async function pintarTendencia(nombre) {
   const semanasCon = t.semanas.filter((s) => s.suficiente).length;
   caja.innerHTML = `${t.suficiente
     ? `${lineaTendencia(t.semanas)}<p>m² mediano de los avisos que aparecieron cada semana: ${t.variacion_m2 >= 0 ? "subió" : "bajó"} ${fmt1.format(Math.abs(t.variacion_m2 * 100))} % desde la primera semana con datos.</p>`
+    : t.mensaje && !t.semanas.length ? `<p>Todavía no hay tendencia: ${esc(t.mensaje)}</p>`
     : `<p>Todavía no hay tendencia: se necesitan al menos ${t.minimo_semanas} semanas con ${t.minimo_por_semana} avisos nuevos o más (hay ${semanasCon}). Aparece sola a medida que el recolector trabaja.</p>`}
     <p>Cambios de precio en los últimos 30 días: ${c.n ? `${fmt.format(c.bajadas)} bajadas y ${fmt.format(c.subidas)} subidas (mediana ${pct(c.variacion_mediana)})` : "ninguno registrado"}.</p>
     <p>${r.n ? `Los ${fmt.format(r.n)} avisos ya retirados duraron publicados ${fmt.format(Math.round(r.dias_mediana))} días (mediana).` : "Ningún aviso de esta zona se ha retirado todavía, así que no se sabe cuánto duran publicados."}</p>`;
@@ -916,11 +988,11 @@ function pintarPanelZona(d) {
         <td class="num">${b.n >= 3 ? pct(b.vs_localidad_pct) : "pocos avisos"}</td></tr>`).join("")
     : `<tr><td colspan="4" class="vacio">Los avisos de esta localidad no traen barrio.</td></tr>`;
 
+  FICHAS.debajo = d.debajo;
   $("#z-debajo").innerHTML = d.debajo.length
-    ? d.debajo.map((a) => {
-      const url = urlSegura(a.url_origen);
+    ? d.debajo.map((a, i) => {
       const desc = `${corto(a.precio)}, ${area(a.area_m2)}${a.barrio ? `, ${esc(a.barrio)}` : ""}`;
-      return `<li><span>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${desc}</a>` : desc}${celdaFuente(a, true)}</span>${chipComparacion(a)}</li>`;
+      return `<li><span><button class="enlace-detalle" type="button" data-ficha="debajo:${i}" aria-label="Ver detalle: ${desc}">${desc}</button>${celdaFuente(a, true)}</span>${chipComparacion(a)}</li>`;
     }).join("")
     : `<li class="vacio">Ningún aviso está más de 10 % por debajo de lo esperado.</li>`;
 }
@@ -1166,22 +1238,21 @@ function pintarActualizacion(a) {
   }
 }
 
-$("#ac-ejecutar").addEventListener("click", async () => {
-  const boton = $("#ac-ejecutar");
-  boton.disabled = true;
+$("#ac-ejecutar").addEventListener("click", () => ocupado($("#ac-ejecutar"), async () => {
   try {
     await api("/api/automatizacion/ejecutar", { method: "POST" });
     REG.info("Ciclo iniciado a mano desde la página");
     $("#ac-nota").textContent = "Ciclo iniciado.";
+    toast("Actualización iniciada: el avance aparece en esta sección.");
   } catch (e) {
     // 409 = ya hay un ciclo corriendo (la página aún no se había enterado): no es una falla.
-    $("#ac-nota").textContent = /ciclo en curso/i.test(e.message)
-      ? "Ya se está actualizando: el avance aparece arriba." : `No se pudo iniciar: ${e.message}`;
+    const enCurso = /ciclo en curso/i.test(e.message);
+    $("#ac-nota").textContent = enCurso ? "Ya se está actualizando: el avance aparece arriba." : `No se pudo iniciar: ${e.message}`;
+    toast(enCurso ? "Ya hay una actualización en curso." : `No se pudo iniciar la actualización: ${e.message}`, { tipo: enCurso ? "info" : "error" });
   } finally {
-    boton.disabled = false;
     setTimeout(cargarActualizacion, 300);
   }
-});
+}));
 
 // Franja de aviso arriba: si no se pudo verificar con la fuente, se dice claramente y desde cuándo
 // son los datos que se están viendo. Nada desactualizado se presenta como vigente.
@@ -1213,35 +1284,224 @@ function marcas(a) {
 
 // ---------------------------------------------------------------- avisos
 let paginaActual = 1;
+// Filtros que cuentan como "activos" (el orden no es un filtro) y su texto en las etiquetas.
+const FILTROS = { localidad: "Localidad", barrio: "Barrio", estrato: "Estrato", precio_max: "Precio máximo",
+  area_min: "Área mínima", comparacion: "Frente a lo esperado" };
+const COLUMNAS_AVISOS = [
+  { id: "cmp", nombre: "Frente a lo esperado" }, { id: "m2", nombre: "Por m²" }, { id: "area", nombre: "Área" },
+  { id: "hab", nombre: "Habitaciones" }, { id: "banos", nombre: "Baños" }, { id: "estrato", nombre: "Estrato" },
+  { id: "localidad", nombre: "Localidad" }, { id: "barrio", nombre: "Barrio" }, { id: "fuente", nombre: "Fuente y verificación" },
+];
+let porPagina = 20;
+let avisosPagina = [];
+
+function parametrosAvisos() {
+  const q = {};
+  for (const [k, v] of new FormData($("#filtros"))) if (v) q[k] = v;
+  return q;
+}
+
+function textoFiltro(k, v) {
+  const sel = $(`#filtros [name="${k}"]`);
+  const opcion = sel?.tagName === "SELECT" ? sel.selectedOptions[0]?.textContent : v;
+  return `${FILTROS[k]}: ${opcion}`;
+}
+
+function pintarChips() {
+  const activos = Object.entries(parametrosAvisos()).filter(([k]) => k in FILTROS);
+  $("#a-chips").innerHTML = activos.map(([k, v]) => `<span class="chip">${esc(textoFiltro(k, v))}
+      <button type="button" data-quitar="${k}" aria-label="Quitar el filtro ${esc(FILTROS[k])}">×</button></span>`).join("")
+    + (activos.length > 1 ? `<button class="boton-texto" type="button" data-quitar="todos">Limpiar filtros</button>` : "");
+  $("#f-cuenta").textContent = activos.length ? `(${activos.length})` : "";
+}
+
 async function cargarAvisos() {
-  const f = new FormData($("#filtros"));
-  const q = new URLSearchParams({ pagina: paginaActual, por_pagina: 20 });
-  for (const [k, v] of f) if (v) q.set(k, v);
+  const q = new URLSearchParams({ ...parametrosAvisos(), pagina: paginaActual, por_pagina: porPagina });
+  const filas = $("#a-filas");
+  filas.setAttribute("aria-busy", "true");
+  if (!avisosPagina.length) {    // primera carga: esqueleto con la forma de la tabla
+    filas.innerHTML = Array.from({ length: 6 }, () => `<tr>${"<td><span class=\"esqueleto\"></span></td>".repeat(11)}</tr>`).join("");
+  }
   const r = await api(`/api/avisos?${q}`);
+  avisosPagina = r.avisos;
   const paginas = Math.max(1, Math.ceil(r.total / r.por_pagina));
   $("#a-conteo").textContent = r.total === 0
-    ? "Ningún aviso cumple estos filtros. Pruebe quitando alguno."
-    : `${fmt.format(r.total)} avisos cumplen los filtros.`;
-  $("#a-filas").innerHTML = r.avisos.map((a) => `<tr>
-      <td>${corto(a.precio)}${precioAnterior(a)}</td><td>${chipComparacion(a)}</td><td>${m2(a.precio_m2)}</td><td>${area(a.area_m2)}</td>
-      <td>${a.habitaciones ?? "—"}</td><td>${a.banos ?? "—"}</td><td>${chipEstrato(a.estrato)}</td>
-      <td>${esc(a.localidad ?? "—")}${marcas(a)}</td><td>${esc(a.barrio ?? "—")}</td><td>${celdaFuente(a)}${a.url_origen ? `<button class="boton-texto boton-historia" type="button" data-url="${esc(a.url_origen)}" aria-expanded="false">Historial</button>` : ""}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
+    ? "Ningún aviso cumple estos filtros."
+    : `${fmt.format(r.total)} avisos · página ${r.pagina} de ${paginas}`;
+  filas.innerHTML = r.total === 0
+    ? `<tr><td colspan="11" class="vacio vacio--grande">Ningún aviso cumple estos filtros. Quite alguno con la × de arriba o <button class="boton-texto" type="button" data-quitar="todos">limpie todos</button>.</td></tr>`
+    : r.avisos.map((a, i) => `<tr class="fila-aviso" data-i="${i}">
+      <td data-col="precio" data-etiqueta="Precio"><button class="enlace-detalle" type="button" data-i="${i}" aria-label="Ver detalle del aviso de ${corto(a.precio)}">${corto(a.precio)}</button>${precioAnterior(a)}</td>
+      <td data-col="cmp" data-etiqueta="Frente a lo esperado">${chipComparacion(a)}</td>
+      <td data-col="m2" class="num" data-etiqueta="Por m²">${m2(a.precio_m2)}</td>
+      <td data-col="area" class="num" data-etiqueta="Área">${area(a.area_m2)}</td>
+      <td data-col="hab" class="num" data-etiqueta="Hab.">${a.habitaciones ?? "—"}</td>
+      <td data-col="banos" class="num" data-etiqueta="Baños">${a.banos ?? "—"}</td>
+      <td data-col="estrato" data-etiqueta="Estrato">${chipEstrato(a.estrato)}</td>
+      <td data-col="localidad" data-etiqueta="Localidad">${esc(a.localidad ?? "—")}${marcas(a)}</td>
+      <td data-col="barrio" data-etiqueta="Barrio">${esc(a.barrio ?? "—")}</td>
+      <td data-col="fuente" data-etiqueta="Fuente">${celdaFuente(a)}</td>
+      <td data-col="enlace">${enlaceAviso(a.url_origen)}</td></tr>`).join("");
+  filas.removeAttribute("aria-busy");
   $("#a-pagina").textContent = `Página ${r.pagina} de ${paginas}`;
-  $("#a-limpiar").hidden = !["localidad", "estrato", "precio_max", "area_min", "comparacion"].some((k) => f.get(k));
   $("#a-anterior").disabled = r.pagina <= 1;
   $("#a-siguiente").disabled = r.pagina >= paginas;
+  marcarOrden($("#tabla-avisos"), $("#f-orden").value);
+  pintarChips();
 }
 const recargarAvisos = () => seguro("Cargar avisos", cargarAvisos, avisoEnSeccion("#a-filas", "la lista de avisos"));
-$("#filtros").addEventListener("change", () => { paginaActual = 1; REG.debug("Filtros de avisos", Object.fromEntries(new FormData($("#filtros")))); recargarAvisos(); });
-$("#a-filas").addEventListener("click", (e) => {
-  const b = e.target.closest(".boton-historia");
-  if (b) mostrarHistoria(b);
+
+// Barrios para autocompletar el filtro, de los avisos del mapa (solo los de la localidad elegida si hay una).
+function actualizarBarrios() {
+  if (!MERCADO) return;
+  const loc = $("#f-localidad").value;
+  const barrios = new Set(MERCADO.mapa.filter((p) => p.barrio && (!loc || p.localidad === loc)).map((p) => p.barrio));
+  $("#barrios-lista").innerHTML = [...barrios].sort((a, b) => a.localeCompare(b, "es")).map((b) => `<option value="${esc(b)}">`).join("");
+}
+
+$("#filtros").addEventListener("change", (e) => {
+  paginaActual = 1;
+  if (e.target.name === "localidad") actualizarBarrios();
+  REG.debug("Filtros de avisos", parametrosAvisos());
+  recargarAvisos();
 });
-$("#a-anterior").addEventListener("click", () => { paginaActual--; recargarAvisos(); });
-$("#a-siguiente").addEventListener("click", () => { paginaActual++; recargarAvisos(); });
-$("#a-limpiar").addEventListener("click", () => {
-  const f = $("#filtros"); const orden = f.orden.value;
-  f.reset(); f.orden.value = orden; paginaActual = 1; recargarAvisos();
+$("#filtros").addEventListener("submit", (e) => { e.preventDefault(); paginaActual = 1; recargarAvisos(); });
+$("#f-abrir").addEventListener("click", () => {
+  const abierto = $(".tabla-barra").classList.toggle("tabla-barra--abierta");
+  $("#f-abrir").setAttribute("aria-expanded", String(abierto));
+});
+$("#avisos").addEventListener("click", (e) => {
+  const quitar = e.target.closest("[data-quitar]");
+  if (quitar) {
+    const f = $("#filtros");
+    for (const k of quitar.dataset.quitar === "todos" ? Object.keys(FILTROS) : [quitar.dataset.quitar]) f.elements[k].value = "";
+    paginaActual = 1;
+    actualizarBarrios();
+    recargarAvisos();
+    toast(quitar.dataset.quitar === "todos" ? "Filtros quitados" : `Filtro quitado: ${FILTROS[quitar.dataset.quitar]}`);
+    return;
+  }
+  const orden = e.target.closest("button.orden");
+  if (orden) {
+    const actual = $("#f-orden").value, col = orden.dataset.orden;
+    $("#f-orden").value = actual === col ? `-${col}` : col;
+    paginaActual = 1;
+    recargarAvisos();
+    return;
+  }
+  const fila = e.target.closest(".fila-aviso");
+  if (fila && !e.target.closest("a")) abrirDetalle(avisosPagina[Number(fila.dataset.i)]);
+});
+$("#a-por-pagina").addEventListener("change", (e) => { porPagina = Number(e.target.value); paginaActual = 1; recargarAvisos(); });
+$("#a-anterior").addEventListener("click", () => { paginaActual--; recargarAvisos(); $("#tabla-avisos").scrollIntoView({ block: "start" }); });
+$("#a-siguiente").addEventListener("click", () => { paginaActual++; recargarAvisos(); $("#tabla-avisos").scrollIntoView({ block: "start" }); });
+columnasVisibles($("#tabla-avisos"), $("#menu-columnas-lista"), COLUMNAS_AVISOS, "vivienda-columnas-avisos");
+
+$("#a-exportar").addEventListener("click", (e) => ocupado(e.currentTarget, async () => {
+  try {
+    const { filas, total } = await traerTodo(api, "/api/avisos", { ...parametrosAvisos() });
+    const fechaTexto = new Date().toISOString().slice(0, 10);
+    descargarCSV(`avisos-${fechaTexto}.csv`,
+      ["Precio", "Precio por m2", "Area m2", "Habitaciones", "Banos", "Parqueaderos", "Estrato", "Localidad", "Barrio",
+        "Precio esperado", "Diferencia frente a lo esperado (%)", "Atipico", "Portal", "Verificado", "Publicado", "Enlace"],
+      filas.map((a) => [a.precio, Math.round(a.precio_m2), a.area_m2, a.habitaciones, a.banos, a.parqueaderos, a.estrato,
+        a.localidad, a.barrio, a.precio_esperado != null ? Math.round(a.precio_esperado) : null,
+        a.diferencia_pct != null ? (a.diferencia_pct * 100).toFixed(1).replace(".", ",") : null, a.atipico,
+        a.fuente?.portal, a.fuente?.verificado_en, a.fuente?.publicado, a.url_origen]));
+    toast(filas.length < total ? `Exportados ${fmt.format(filas.length)} de ${fmt.format(total)} avisos (máximo 10.000)` : `Exportados ${fmt.format(filas.length)} avisos`);
+    REG.info(`CSV de avisos exportado: ${filas.length} filas`);
+  } catch (err) {
+    toast(`No se pudo exportar: ${err.message}`, { tipo: "error" });
+  }
+}));
+
+// ---------------------------------------------------------------- detalle de un aviso (panel lateral)
+let mapaDetalle = null;
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-ficha]");
+  if (!b) return;
+  const [grupo, i] = b.dataset.ficha.split(":");
+  if (FICHAS[grupo]?.[+i]) abrirDetalle(FICHAS[grupo][+i]);
+});
+
+function fichaAviso(a) {
+  const filas = [
+    ["Área", area(a.area_m2)], ["Por m²", m2(a.precio_m2)], ["Estrato", a.estrato ?? "—"], ["Habitaciones", a.habitaciones ?? "—"],
+    ["Baños", a.banos ?? "—"], ["Parqueaderos", a.parqueaderos ?? "—"], ["Localidad", esc(a.localidad ?? "—")],
+    ["Barrio", esc(a.barrio ?? "—")], ["Antigüedad", a.antiguedad != null ? `${fmt.format(a.antiguedad)} años` : "—"],
+    ["Piso", a.piso ?? "—"], ["Administración", a.administracion ? `$${fmt.format(Math.round(a.administracion / 1000) * 1000)}/mes` : "—"],
+    ["Precio esperado", a.precio_esperado ? corto(a.precio_esperado) : "—"],
+  ];
+  const esperado = a.diferencia_pct == null ? "" : `<p class="como-leer">El modelo esperaba ${corto(a.precio_esperado)} para un apartamento así, sin haberlo visto al entrenar: este pide ${fmt.format(Math.abs(Math.round(a.diferencia_pct * 100)))} % ${a.diferencia_pct < 0 ? "menos" : "más"}.</p>`;
+  return `<div><p class="panel__precio">${millones(a.precio)}</p>${precioAnterior(a)}<p>${chipComparacion(a)} ${marcas(a)}</p>${esperado}</div>
+    <dl class="ficha">${filas.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+    <div class="panel__acciones">
+      ${a.url_origen ? `<a class="boton" href="${esc(a.url_origen)}" target="_blank" rel="noopener noreferrer">Ver en el portal</a>` : ""}
+      <button class="boton-secundario" type="button" data-accion="estimar">Estimar uno así</button>
+      ${a.latitud ? `<button class="boton-secundario" type="button" data-accion="mapa">Ver en el mapa de zonas</button>` : ""}
+      <button class="boton-fantasma" type="button" data-accion="copiar">Copiar datos</button>
+    </div>
+    ${a.latitud ? `<div><h3>Ubicación</h3><div class="panel__mapa" id="panel-mapa" role="region" aria-label="Mapa con la ubicación aproximada del aviso"></div></div>` : ""}
+    <div><h3>Fuente</h3>${celdaFuente(a)}</div>
+    <div><h3>Historial</h3><div id="panel-historia"><span class="esqueleto" style="height:4rem"></span></div></div>`;
+}
+
+async function abrirDetalle(entrada) {
+  const cerrar = () => { if (mapaDetalle) { mapaDetalle.remove(); mapaDetalle = null; } };
+  const cuerpo = abrirPanel("Detalle del aviso", `<span class="esqueleto" style="height:2.4rem;width:60%"></span><span class="esqueleto" style="height:9rem"></span>`, { cerrar });
+  let a = typeof entrada === "string" ? null : entrada;
+  try {
+    if (!a) a = await api(`/api/aviso?url=${encodeURIComponent(entrada)}`);
+  } catch (e) {
+    cuerpo.innerHTML = `<p class="error-seccion" role="alert">No se pudo abrir el aviso: ${esc(e.message)}</p>`;
+    return;
+  }
+  REG.info("Detalle de aviso abierto", { url: a.url_origen, precio: a.precio });
+  cuerpo.innerHTML = fichaAviso(a);
+  cuerpo.querySelector('[data-accion="estimar"]').addEventListener("click", () => {
+    cerrarPanel();
+    llevarAlEstimador({ area_m2: Math.round(a.area_m2), estrato: a.estrato, localidad: a.localidad, habitaciones: a.habitaciones,
+      banos: a.banos, parqueaderos: a.parqueaderos, antiguedad: a.antiguedad });
+  });
+  cuerpo.querySelector('[data-accion="mapa"]')?.addEventListener("click", () => { cerrarPanel(); verEnMapa(a); });
+  cuerpo.querySelector('[data-accion="copiar"]').addEventListener("click", async () => {
+    await copiar([`Precio: ${millones(a.precio)}`, `Área: ${area(a.area_m2)}`, `Estrato: ${a.estrato ?? "—"}`,
+      `Habitaciones: ${a.habitaciones ?? "—"}`, `Baños: ${a.banos ?? "—"}`, `Localidad: ${a.localidad ?? "—"}`,
+      `Barrio: ${a.barrio ?? "—"}`, a.url_origen || ""].join("\n"));
+    toast("Datos del aviso copiados");
+  });
+  if (a.latitud && window.L) {
+    mapaDetalle = L.map("panel-mapa", { zoomControl: true, attributionControl: true, scrollWheelZoom: false }).setView([a.latitud, a.longitud], 15);
+    L.tileLayer(teselas(), { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 18 }).addTo(mapaDetalle);
+    L.circleMarker([a.latitud, a.longitud], { radius: 8, weight: 2, color: tono("--trazo-claro"), fillColor: tono("--ladrillo"), fillOpacity: 1 }).addTo(mapaDetalle);
+    setTimeout(() => mapaDetalle && mapaDetalle.invalidateSize(), 220);
+  }
+  const caja = cuerpo.querySelector("#panel-historia");
+  if (!a.url_origen) { caja.textContent = "Este aviso no tiene enlace al portal, así que no hay historial."; return; }
+  try {
+    caja.innerHTML = historiaHTML(await api(`/api/historia?url=${encodeURIComponent(a.url_origen)}`));
+  } catch (e) {
+    caja.textContent = /no está en la base/.test(e.message) ? "La base no tiene historial de este aviso todavía." : `No se pudo leer el historial: ${e.message}`;
+  }
+}
+
+// Del detalle al mapa: abre la localidad en Zonas, acerca al punto y lo marca.
+async function verEnMapa(a) {
+  $("#zonas").scrollIntoView({ behavior: reducirMovimiento ? "auto" : "smooth" });
+  if (a.localidad) await seleccionarZona(a.localidad, { encuadrar: false });
+  if (!ZONAS.mapa) return;
+  if (ZONAS.marcaDetalle) ZONAS.marcaDetalle.remove();
+  ZONAS.marcaDetalle = L.circleMarker([a.latitud, a.longitud], { radius: 11, weight: 3, color: tono("--ladrillo"), fillColor: tono("--ladrillo"), fillOpacity: 0.25 })
+    .bindPopup(`<strong>${millones(a.precio)}</strong><br>${area(a.area_m2)}, ${esc(a.barrio || a.localidad || "")}`).addTo(ZONAS.mapa);
+  ZONAS.mapa.setView([a.latitud, a.longitud], 15, { animate: !reducirMovimiento });
+  ZONAS.marcaDetalle.openPopup();
+  toast("Aviso marcado en el mapa de zonas");
+}
+
+// Cualquier botón "Ver detalle" con data-url (mapa, listas de zona) abre el panel.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-detalle-url]");
+  if (b) { e.preventDefault(); abrirDetalle(b.dataset.detalleUrl); }
 });
 
 // ---------------------------------------------------------------- modelo
