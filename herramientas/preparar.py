@@ -129,6 +129,25 @@ def inicio_automatico():
         log.warning("No se pudo crear el acceso directo de inicio automático: %s", (r.stderr or r.stdout).strip()[:300])
 
 
+def acceso_escritorio():
+    """Windows: ícono "Vivienda Bogotá" en el escritorio que abre la aplicación (iniciar.bat)."""
+    if os.name != "nt":
+        return
+    ps = ("$d=[Environment]::GetFolderPath('Desktop');$p=Join-Path $d 'Vivienda Bogotá.lnk';"
+          "if(Test-Path $p){'ya'}else{$s=(New-Object -ComObject WScript.Shell).CreateShortcut($p);"
+          "$s.TargetPath=$env:DESTINO;$s.WorkingDirectory=$env:CARPETA;$s.IconLocation=$env:ICONO;"
+          "$s.Description='Estimar el precio de un apartamento en Bogotá';$s.Save();'creado'}")
+    r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env={**os.environ, "DESTINO": str(RAIZ / "iniciar.bat"), "CARPETA": str(RAIZ),
+                            "ICONO": str(RAIZ / "herramientas" / "icono.ico")})
+    salida = (r.stdout or "").strip()
+    if r.returncode == 0 and salida == "creado":
+        log.info("Ícono 'Vivienda Bogotá' creado en el escritorio: la próxima vez basta con doble clic")
+    elif r.returncode != 0:
+        log.warning("No se pudo crear el ícono del escritorio: %s", (r.stderr or "").strip()[:300])
+
+
 def main():
     log.info("==== Preparando %s con Python %s ====", RAIZ, sys.version.split()[0])
     if sys.version_info < (3, 11):
@@ -140,6 +159,10 @@ def main():
         actualizar_config()
     except Exception:
         log.exception("No se pudo actualizar config/portales.yaml (se sigue con el actual)")
+    try:
+        acceso_escritorio()
+    except Exception:
+        log.exception("No se pudo crear el ícono del escritorio (se sigue sin él)")
     try:
         inicio_automatico()
     except Exception:

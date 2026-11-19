@@ -24,6 +24,23 @@ jobs:
       - name: Pruebas
         run: pytest -q
 
+  windows:
+    # La mayoría de quienes usan la app están en Windows: rutas, codificación, SQLite y procesos en segundo plano.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Pruebas
+        run: pytest -q
+      - name: Diagnóstico sin red
+        run: python -m app.diagnostico --sin-red; exit 0
+        shell: pwsh
+
   navegadores:
     # La interfaz debe funcionar en Chrome, Edge, Firefox, Safari, Opera y Samsung Internet (.browserslistrc).
     runs-on: ubuntu-latest
