@@ -17,6 +17,19 @@ Proyecto de Electiva II, Universidad ECCI: Diego Alejandro Galicia Forero, Crist
 - **Avisos:** una tabla con filtros para revisar los datos uno por uno, con cuánto está cada aviso por encima o por debajo del precio que el modelo esperaba para él, y si su precio subió o bajó.
 - **Modelo:** las métricas de validación cruzada y de la prueba final, explicadas.
 
+## Recolector en segundo plano
+
+La base no crece solo cuando alguien usa la aplicación. Un proceso aparte, `python -m scraper.servicio`, la alimenta todo el tiempo:
+
+- **Arranca solo**: al abrir la app (si no está corriendo) y, en Windows, al iniciar sesión (`iniciar.bat` deja un acceso directo en la carpeta Inicio, sin permisos de administrador). Sigue trabajando aunque se cierren la página y la app; se detiene solo al apagar el computador. `quitar-recolector.bat` lo detiene y quita el inicio automático.
+- **Mientras haya avisos por leer, no para**: encadena ciclos con un minuto de separación; cuando la base está al día, vuelve cada `intervalo_horas`. Respeta las mismas pausas de 4 a 8 s entre solicitudes, robots.txt y las pausas largas si el portal limita el acceso.
+- **Lee primero lo que falta**: con más de 300 avisos pendientes no sigue recorriendo el listado (solo mira las primeras páginas, lo más nuevo) y dedica el tiempo a leerlos.
+- **Las tarjetas del listado traen los datos**: cuando la tarjeta de un aviso trae precio, área, estrato, habitaciones y ubicación, se guarda sin abrir el aviso (unas 25 por solicitud); si le falta algo, se abre después para completarlo, sin registrarlo como un cambio.
+- **La demanda manda**: si una estimación sale sin comparables o con confiabilidad baja, esa localidad pasa primero en la cola de lectura durante 72 h.
+- **Las consultas no esperan al portal**: las estimaciones usan la base ya validada; el portal solo lo visita el recolector.
+
+La sección Actualización muestra si el recolector está vivo, desde cuándo, cuántos avisos nuevos guardó y verificó en las últimas 24 h y cuánto falta, a ese ritmo, para leer los pendientes. Su registro está en `datos/registros/recolector.log`.
+
 ## Registros (logs) y diagnóstico
 
 Todo lo que pasa queda escrito, en el servidor y en el navegador:

@@ -1199,8 +1199,16 @@ function pintarActualizacion(a) {
   $("#ac-nota").textContent = u && u.resultado !== "completo" && u.mensaje ? `Último ciclo: ${u.mensaje}` : "";
 
   const b = a.base || {};
+  const sp = a.segundo_plano || {};
+  const ritmo = (b.nuevos_24_h || 0) / 24;
+  const falta = ritmo > 0 && b.pendientes ? Math.ceil(b.pendientes / ritmo) : null;
+  $("#ac-segundo-plano").hidden = !sp.activo;
+  if (sp.activo) {
+    $("#ac-segundo-plano").textContent = `El recolector trabaja en segundo plano desde ${fechaCorta(sp.desde)} y sigue aunque cierre esta página o la aplicación (mientras el computador esté encendido). En las últimas 24 h guardó ${fmt.format(b.nuevos_24_h || 0)} avisos nuevos y verificó ${fmt.format(b.verificados_24_h || 0)}.${falta ? ` A este ritmo, los ${fmt.format(b.pendientes)} pendientes se leen en unas ${fmt.format(falta)} h.` : ""}`;
+  }
   const base = [["Enlaces conocidos", b.enlaces], ["Pendientes por leer", b.pendientes], ["Avisos guardados", b.guardados],
-    ["Disponibles hoy", b.disponibles], ["Retirados del portal", b.retirados], ["Cambios de precio, 7 días", b.cambios_precio_7_dias]];
+    ["Disponibles hoy", b.disponibles], ["Nuevos, últimas 24 h", b.nuevos_24_h], ["Verificados, últimas 24 h", b.verificados_24_h],
+    ["Retirados del portal", b.retirados], ["Cambios de precio, 7 días", b.cambios_precio_7_dias]];
   $("#ac-base").innerHTML = base.map(([k, v]) => `<div><dt>${k}</dt><dd>${fmt.format(v ?? 0)}</dd></div>`).join("");
 
   $("#ac-ejecuciones").innerHTML = a.ejecuciones.length

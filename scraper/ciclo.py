@@ -24,6 +24,7 @@ import datetime as dt
 import json
 import logging
 import os
+import pathlib
 import re
 import time
 
@@ -33,12 +34,12 @@ from sqlalchemy import func, insert, or_, select, update
 from limpieza import normalizar as nz
 
 from . import db
-from .extraer import CAMPOS, enlaces_detalle, extraer, tarjetas_listado
+from .extraer import CAMPOS, avisos_listado, completo, enlaces_detalle, extraer
 from .http import AvisoRetirado, BloqueoDelPortal, Cliente
 from .recolectar import RAIZ, cargar_conf
 
 log = logging.getLogger("vivienda.ciclo")
-CARPETA = RAIZ / "datos" / "estado"
+CARPETA = pathlib.Path(os.environ.get("VIVIENDA_ESTADO", RAIZ / "datos" / "estado"))
 ESTADO = CARPETA / "ciclo.json"
 CANDADO = CARPETA / "ciclo.lock"
 
@@ -49,6 +50,10 @@ SEGUIDOS = {"precio": nz.precio, "area": nz.area, "administracion": nz.precio,
 
 POR_DEFECTO = {"activo": True, "intervalo_horas": 2, "primer_ciclo_tras_segundos": 30,
                "paginas_iniciales_siempre": 5, "paginas_por_ciclo": 100, "nuevos_por_ciclo": 600,
+               # Con más de esto por leer, el ciclo no recorre el resto del listado: lee lo pendiente
+               "pendientes_para_pausar_listado": 300,
+               # true: un recolector en segundo plano sigue alimentando la base con la app cerrada
+               "segundo_plano": True,
                "revisiones_por_ciclo": 400, "dias_entre_revisiones": 3, "dias_vigencia": 7,
                "max_minutos_por_ciclo": 240,
                "espera_tras_bloqueo_horas": 6, "max_errores_seguidos": 25, "versiones_csv_a_conservar": 10}
@@ -56,6 +61,32 @@ POR_DEFECTO = {"activo": True, "intervalo_horas": 2, "primer_ciclo_tras_segundos
 
 def ajustes(conf: dict) -> dict:
     return {**POR_DEFECTO, **(conf.get("automatico") or {})}
+
+
+DEMANDA = CARPETA / "demanda.json"
+PARAR = CARPETA / "parar"
+
+
+def leer_demanda() -> dict[str, int]:
+    """Localidades donde faltaron comparables en las últimas 72 h, con cuántas veces pasó."""
+    try:
+        d = json.loads(DEMANDA.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    limite = (dt.datetime.now() - dt.timedelta(hours=72)).isoformat()
+    return {k: v["n"] for k, v in d.items() if v.get("ultima", "") >= limite}
+
+
+def anotar_demanda(localidad: str) -> None:
+    """Lo llama la app cuando una estimación salió sin comparables o con confiabilidad baja."""
+    try:
+        d = json.loads(DEMANDA.read_text(encoding="utf-8")) if DEMANDA.exists() else {}
+    except ValueError:
+        d = {}
+    e = d.get(localidad, {"n": 0})
+    d[localidad] = {"n": e["n"] + 1, "ultima": dt.datetime.now().isoformat(timespec="seconds")}
+    CARPETA.mkdir(parents=True, exist_ok=True)
+    DEMANDA.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
 
 
 def ahora() -> dt.datetime:
@@ -112,6 +143,8 @@ class Presupuesto:
         self.fin = time.monotonic() + minutos * 60
 
     def agotado(self) -> bool:
+        if PARAR.exists():          # se pidió detener el recolector: el ciclo termina ordenadamente
+            return True
         return time.monotonic() > self.fin
 
 
@@ -122,7 +155,7 @@ class Ciclo:
         self.eng = eng or db.motor()
         self.presupuesto = Presupuesto(self.aj["max_minutos_por_ciclo"])
         self.n = {"enlaces_nuevos": 0, "avisos_nuevos": 0, "revisados": 0, "con_cambios": 0,
-                  "retirados": 0, "verificados_listado": 0, "errores": 0}
+                  "retirados": 0, "verificados_listado": 0, "desde_listado": 0, "errores": 0}
 
     def progreso(self, fase: str, detalle: str = ""):
         log.debug("Progreso: %s | %s | %s", fase, detalle, self.n)
@@ -131,14 +164,18 @@ class Ciclo:
             os.utime(CANDADO)     # "sigo vivo"
 
     # ---- fase 1
-    def listado(self, nombre: str, p: dict):
+    def listado(self, nombre: str, p: dict, solo_iniciales: bool = False):
         est = leer_estado()
         cursor = max(int((est.get("cursor") or {}).get(nombre, 0)), self.aj["paginas_iniciales_siempre"] + 1)
         iniciales = list(range(1, self.aj["paginas_iniciales_siempre"] + 1))
-        tramo = list(range(cursor, cursor + self.aj["paginas_por_ciclo"]))
+        tramo = [] if solo_iniciales else list(range(cursor, cursor + self.aj["paginas_por_ciclo"]))
+        if solo_iniciales:
+            log.info("Hay muchos avisos por leer: del listado solo se miran las primeras %d páginas (lo más nuevo)",
+                     len(iniciales))
         vacias, max_vacias = 0, self.conf["general"].get("max_paginas_vacias_seguidas", 5)
         siguiente = cursor
-        log.info("Listado de %s: páginas 1-%d y tramo %d-%d", nombre, len(iniciales), tramo[0], tramo[-1])
+        if tramo:
+            log.info("Listado de %s: páginas 1-%d y tramo %d-%d", nombre, len(iniciales), tramo[0], tramo[-1])
         for n in iniciales + tramo:
             if self.presupuesto.agotado():
                 log.warning("Se acabó el tiempo del ciclo (%s min) en la página %d del listado",
@@ -167,12 +204,39 @@ class Ciclo:
                 if filas:
                     c.execute(insert(db.enlaces), filas)
             self.n["enlaces_nuevos"] += len(filas)
-            self.verificar_desde_listado(tarjetas_listado(html, p["base"], p["patron_detalle"]))
+            tarjetas = avisos_listado(html, p["base"], p["patron_detalle"], p.get("patron_barrio_url"))
+            self.verificar_desde_listado({u: c["precio"] for u, c in tarjetas.items()})
+            self.guardar_desde_listado(nombre, tarjetas)
             log.info("Página %d de %s: %d avisos, %d nuevos", n, nombre, len(links), len(filas))
             log.debug("Enlaces nuevos de la página %d: %s", n, [f["url"] for f in filas])
         log.info("Listado de %s terminado: %d enlaces nuevos; el próximo ciclo sigue en la página %d",
                  nombre, self.n["enlaces_nuevos"], siguiente)
         escribir_estado(cursor={**(leer_estado().get("cursor") or {}), nombre: siguiente})
+
+    def guardar_desde_listado(self, nombre: str, tarjetas: dict[str, dict]):
+        """Avisos nuevos cuyos datos vienen completos en la tarjeta del listado: se guardan sin abrirlos.
+        Los incompletos se guardan igual (sirven para contar y verificar) y quedan en la cola para
+        completarse abriendo el aviso."""
+        if not tarjetas:
+            return
+        t = db.inmuebles_crudos.c
+        with self.eng.begin() as c:
+            ya = set(c.scalars(select(t.url_origen).where(t.url_origen.in_(list(tarjetas)))))
+        completos = []
+        for url, campos in tarjetas.items():
+            if url in ya or not campos.get("area"):
+                continue
+            self.guardar(nombre, url, campos, "listado")
+            self.n["desde_listado"] += 1
+            if completo(campos):
+                completos.append(url)
+        if completos:
+            with self.eng.begin() as c:
+                e = db.enlaces.c
+                c.execute(update(db.enlaces).where(e.url.in_(completos)).values(
+                    procesado=True, ultimo_estado="ok-listado", ultima_visita=ahora(), disponible=True))
+        log.debug("Desde el listado: %d guardados, %d completos sin abrir el aviso",
+                  self.n["desde_listado"], len(completos))
 
     def verificar_desde_listado(self, tarjetas: dict[str, str]):
         """Avisos ya guardados que aparecen en el listado: si el precio es el mismo, quedan
@@ -206,10 +270,28 @@ class Ciclo:
 
     # ---- fases 2 y 3
     def pendientes(self, nombre: str, limite: int) -> list[str]:
+        """Avisos por leer. Primero los de las localidades donde los usuarios pidieron estimaciones
+        y faltaron comparables (datos/estado/demanda.json); luego los más antiguos de la cola."""
         with self.eng.begin() as c:
-            return list(c.scalars(select(db.enlaces.c.url)
+            urls = list(c.scalars(select(db.enlaces.c.url)
                                   .where(db.enlaces.c.portal == nombre, db.enlaces.c.procesado.is_(False))
-                                  .order_by(db.enlaces.c.descubierto_en).limit(limite)))
+                                  .order_by(db.enlaces.c.descubierto_en)))
+        demanda = leer_demanda()
+        if demanda and urls:
+            patron = self.conf["portales"][nombre].get("patron_barrio_url")
+
+            def prioridad(u):
+                m = re.search(patron, u) if patron else None
+                loc = nz.localidad(None, m.group(1).replace("-", " ")) if m else None
+                return -demanda.get(loc, 0)
+            urls.sort(key=prioridad)      # sort estable: dentro de cada grupo se respeta la antigüedad
+            log.info("Prioridad por demanda de los usuarios: %s", demanda)
+        return urls[:limite]
+
+    def contar_pendientes(self, nombre: str) -> int:
+        with self.eng.begin() as c:
+            return c.scalar(select(func.count()).where(db.enlaces.c.portal == nombre,
+                                                       db.enlaces.c.procesado.is_(False))) or 0
 
     def por_revisar(self, nombre: str, limite: int) -> list[str]:
         corte = ahora() - dt.timedelta(days=self.aj["dias_entre_revisiones"])
@@ -290,11 +372,17 @@ class Ciclo:
                     "disponible": True, "retirado_en": None}
             if previo is None:
                 c.execute(insert(t), {**nuevo, **base, "primera_vez": momento, "actualizado_en": momento})
+                if metodo == "listado":
+                    self.n["avisos_nuevos"] += 1
+                    return
                 self.n["avisos_nuevos"] += 1
                 log.debug("Aviso nuevo guardado: %s precio=%s área=%s", url, nuevo.get("precio_txt"), nuevo.get("area_txt"))
                 return
             cambios = []
-            for campo, f in SEGUIDOS.items():
+            # Completar un aviso guardado desde la tarjeta del listado no es un "cambio": la tarjeta y la
+            # página del aviso pueden leer distinto el mismo dato (área construida vs. privada, etc.).
+            completando = str(previo.get("metodo_extraccion") or "") == "listado" and metodo != "listado"
+            for campo, f in ({} if completando else SEGUIDOS).items():
                 antes, despues = previo[f"{campo}_txt"], nuevo[f"{campo}_txt"]
                 if despues is not None and f(despues) is not None and f(despues) != f(antes):
                     cambios.append({"url_origen": url, "fecha": ahora(), "campo": campo,
@@ -336,7 +424,8 @@ class Ciclo:
 
     def recolectar(self):
         for nombre, p in self.portales():
-            self.listado(nombre, p)
+            pendientes = self.contar_pendientes(nombre)
+            self.listado(nombre, p, solo_iniciales=pendientes > self.aj["pendientes_para_pausar_listado"])
             self.recorrer(nombre, p, self.pendientes(nombre, self.aj["nuevos_por_ciclo"]),
                           "Leyendo avisos nuevos", revision=False)
             self.recorrer(nombre, p, self.por_revisar(nombre, self.aj["revisiones_por_ciclo"]),

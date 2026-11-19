@@ -145,6 +145,7 @@ ejecuciones = Table(
     Column("con_cambios", Integer, default=0),
     Column("retirados", Integer, default=0),
     Column("verificados_listado", Integer, default=0),   # confirmados desde el listado sin abrir el aviso
+    Column("desde_listado", Integer, default=0),         # guardados con los datos de la tarjeta del listado
     Column("version_dataset", Integer),
     Column("mensaje", Text),
 )

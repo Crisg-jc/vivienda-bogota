@@ -56,8 +56,11 @@ def nivel_pedido(predeterminado: str = "INFO") -> int:
     return getattr(logging, nombre, logging.INFO)
 
 
-def configurar(proceso: str = "app", nivel: int | str | None = None, archivo: bool = True,
+def configurar(proceso: str = "app", nivel: int | str | None = None, archivo: bool | str = True,
                consola: bool = True) -> logging.Logger:
+    """archivo=True escribe en vivienda.log/errores.log; un nombre (p. ej. "recolector") escribe en
+    recolector.log/recolector-errores.log: cada proceso que corre a la vez tiene sus archivos, porque
+    en Windows dos procesos no pueden rotar el mismo archivo."""
     """Deja listo el registro para este proceso. Se puede llamar varias veces: solo actúa la primera."""
     global _configurado
     raiz = logging.getLogger()
@@ -88,10 +91,12 @@ def configurar(proceso: str = "app", nivel: int | str | None = None, archivo: bo
         try:
             CARPETA.mkdir(parents=True, exist_ok=True)
             # delay=True: el archivo se abre al primer mensaje; encoding fijo para que Windows no use cp1252.
-            general = logging.handlers.RotatingFileHandler(GENERAL, maxBytes=5_000_000, backupCount=5,
+            nombre_g, nombre_e = (GENERAL, ERRORES) if archivo is True else (
+                CARPETA / f"{archivo}.log", CARPETA / f"{archivo}-errores.log")
+            general = logging.handlers.RotatingFileHandler(nombre_g, maxBytes=5_000_000, backupCount=5,
                                                            encoding="utf-8", delay=True)
             _preparar(general, formato, contexto)
-            errores = logging.handlers.RotatingFileHandler(ERRORES, maxBytes=2_000_000, backupCount=3,
+            errores = logging.handlers.RotatingFileHandler(nombre_e, maxBytes=2_000_000, backupCount=3,
                                                            encoding="utf-8", delay=True)
             errores.setLevel(logging.WARNING)
             _preparar(errores, formato, contexto, nivel_fijo=True)
@@ -175,9 +180,9 @@ def cronometro(log: logging.Logger, que: str, nivel: int = logging.INFO, **detal
     log.log(nivel, "LISTO %s en %.2fs %s", que, time.perf_counter() - t, extra, stacklevel=3)
 
 
-def ultimas_lineas(n: int = 300, solo_errores: bool = False) -> list[str]:
+def ultimas_lineas(n: int = 300, solo_errores: bool = False, ruta: pathlib.Path | None = None) -> list[str]:
     """Las últimas n líneas del registro, sin cargar el archivo entero en memoria."""
-    ruta = ERRORES if solo_errores else GENERAL
+    ruta = ruta or (ERRORES if solo_errores else GENERAL)
     if not ruta.exists():
         return []
     with open(ruta, "rb") as f:

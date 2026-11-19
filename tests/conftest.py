@@ -3,3 +3,4 @@ import os
 import tempfile
 
 os.environ.setdefault("VIVIENDA_REGISTROS", tempfile.mkdtemp(prefix="vivienda-registros-"))
+os.environ.setdefault("VIVIENDA_ESTADO", tempfile.mkdtemp(prefix="vivienda-estado-"))

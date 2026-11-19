@@ -559,3 +559,5 @@ body.modo-sin-datos .precio-flotante { display: none; }
 .perfil-zona[open] summary { margin-bottom: .2rem; }
 .pz-resumen { font-weight: 400; font-size: var(--t-xs); color: var(--musgo); }
 .campo-corto { min-height: 2.75rem; text-align: center; font-variant-numeric: tabular-nums; }
+.segundo-plano { margin: .6rem 0 0; padding: .55rem .8rem; border-left: 3px solid var(--musgo); background: rgba(79, 107, 91, .08);
+  font-size: var(--t-s); color: var(--paramo); border-radius: 0 var(--radio) var(--radio) 0; }

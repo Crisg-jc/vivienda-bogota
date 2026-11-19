@@ -28,6 +28,8 @@ automatico:
   revisiones_por_ciclo: 400         # avisos ya guardados que se vuelven a abrir por ciclo para verificarlos
   dias_entre_revisiones: 3          # un aviso se vuelve a abrir como máximo cada 3 días (el listado lo verifica antes si puede)
   dias_vigencia: 7                  # pasado este tiempo sin verificar, el aviso se marca 'sin verificar' en la interfaz
+  segundo_plano: true               # un recolector sigue alimentando la base con la app cerrada (inicia con Windows)
+  pendientes_para_pausar_listado: 300   # con más avisos por leer, el ciclo los lee en vez de seguir recorriendo el listado
   max_minutos_por_ciclo: 240
   espera_tras_bloqueo_horas: 6      # tras un 403, 429 o captcha; se duplica si se repite (máximo 48 h)
   max_errores_seguidos: 25          # si tantos avisos seguidos salen sin datos, el portal cambió: se detiene

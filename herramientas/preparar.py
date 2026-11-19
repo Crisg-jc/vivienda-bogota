@@ -7,6 +7,7 @@
 """
 import hashlib
 import logging
+import os
 import pathlib
 import shutil
 import subprocess
@@ -95,6 +96,39 @@ def actualizar_config():
     log.info("config/portales.yaml actualizado (copia del anterior en %s): %s", copia.name, "; ".join(cambios) or "sin cambios de valores")
 
 
+def inicio_automatico():
+    """Windows: acceso directo en la carpeta Inicio del usuario, para que el recolector arranque solo
+    al encender el computador e iniciar sesión, aunque nadie abra la aplicación. No pide permisos
+    de administrador. Se quita con quitar-recolector.bat."""
+    if os.name != "nt":
+        return
+    import yaml
+    try:
+        aj = (yaml.safe_load((RAIZ / "config" / "portales.yaml").read_text(encoding="utf-8")) or {}).get("automatico") or {}
+    except Exception:
+        aj = {}
+    if aj.get("segundo_plano", True) is False or aj.get("activo", True) is False:
+        log.info("Recolector en segundo plano desactivado en config/portales.yaml: no se configura el inicio automático")
+        return
+    inicio = pathlib.Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    if not inicio.exists():
+        log.warning("No se encontró la carpeta Inicio de Windows (%s): el recolector arrancará al abrir la app", inicio)
+        return
+    acceso = inicio / "Vivienda Bogota - recolector.lnk"
+    pythonw = pathlib.Path(sys.executable).with_name("pythonw.exe")
+    destino = pythonw if pythonw.exists() else pathlib.Path(sys.executable)
+    ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:ACCESO);"
+          "$s.TargetPath=$env:DESTINO;$s.Arguments='-m scraper.servicio';$s.WorkingDirectory=$env:CARPETA;"
+          "$s.WindowStyle=7;$s.Description='Recolector de avisos de vivienda-bogota';$s.Save()")
+    r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env={**os.environ, "ACCESO": str(acceso), "DESTINO": str(destino), "CARPETA": str(RAIZ)})
+    if r.returncode == 0 and acceso.exists():
+        log.info("Inicio automático configurado: el recolector arranca solo al iniciar sesión en Windows (%s)", acceso)
+    else:
+        log.warning("No se pudo crear el acceso directo de inicio automático: %s", (r.stderr or r.stdout).strip()[:300])
+
+
 def main():
     log.info("==== Preparando %s con Python %s ====", RAIZ, sys.version.split()[0])
     if sys.version_info < (3, 11):
@@ -106,6 +140,10 @@ def main():
         actualizar_config()
     except Exception:
         log.exception("No se pudo actualizar config/portales.yaml (se sigue con el actual)")
+    try:
+        inicio_automatico()
+    except Exception:
+        log.exception("No se pudo configurar el inicio automático del recolector (se sigue sin él)")
     try:
         datos_anteriores()
     except Exception:

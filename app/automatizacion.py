@@ -16,7 +16,7 @@ import threading
 from sqlalchemy import func, or_, select
 
 from scraper import ciclo as cy
-from scraper import db
+from scraper import db, servicio
 from scraper.recolectar import RAIZ, cargar_conf
 
 log = logging.getLogger("vivienda.automatico")
@@ -79,6 +79,36 @@ class Orquestador:
         return self._motor
 
     # ---------------------------------------------------------------- ciclo de vida
+    # ---------------------------------------------------------------- recolector en segundo plano
+    def segundo_plano(self) -> bool:
+        try:
+            return bool(self.ajustes()[1].get("segundo_plano", True))
+        except Exception:
+            return False
+
+    def lanzar_recolector(self) -> bool:
+        """Arranca scraper.servicio como proceso independiente: sigue vivo aunque se cierre la app."""
+        if servicio.vivo():
+            return True
+        exe = sys.executable
+        try:
+            if os.name == "nt":
+                w = os.path.join(os.path.dirname(exe), "pythonw.exe")
+                exe = w if os.path.exists(w) else exe
+                # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: sin ventana y sin recibir el Ctrl+C de la app
+                p = subprocess.Popen([exe, "-m", "scraper.servicio"], cwd=RAIZ, creationflags=0x00000008 | 0x00000200,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     close_fds=True)
+            else:
+                p = subprocess.Popen([exe, "-m", "scraper.servicio"], cwd=RAIZ, start_new_session=True,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            log.exception("No se pudo arrancar el recolector en segundo plano; la app recolecta mientras esté abierta")
+            return False
+        log.info("Recolector en segundo plano arrancado (pid %s, %s). Sigue trabajando aunque cierre la app; "
+                 "registro en datos/registros/recolector.log", p.pid, exe)
+        return True
+
     def iniciar(self):
         if not self.activo():
             log.info("Automatización apagada (config o VIVIENDA_AUTOMATICO=0).")
@@ -101,6 +131,12 @@ class Orquestador:
         if "cambiar" in contacto.lower() or "example" in contacto.lower() or "@" not in contacto:
             log.warning("El user_agent de config/portales.yaml no tiene un correo de contacto real: %r", contacto)
         self.proximo = ahora() + dt.timedelta(seconds=aj["primer_ciclo_tras_segundos"])
+        if self.segundo_plano():
+            if servicio.vivo():
+                log.info("Ya hay un recolector en segundo plano trabajando (pid %s): la app solo muestra su estado",
+                         servicio.leer_latido().get("pid"))
+            else:
+                self.lanzar_recolector()
         self.hilo = threading.Thread(target=self._bucle, name="ciclo-automatico", daemon=True)
         self.hilo.start()
         log.info("Automatización activa: primer ciclo a las %s, luego cada %s h.",
@@ -109,6 +145,8 @@ class Orquestador:
     def detener(self):
         self.parar.set()
         self.despertar.set()
+        if servicio.vivo():
+            log.info("La app se cierra; el recolector en segundo plano sigue alimentando la base")
         if self.proceso and self.proceso.poll() is None:
             self.proceso.terminate()
             try:
@@ -121,6 +159,11 @@ class Orquestador:
     def ejecutar_ahora(self) -> tuple[bool, str]:
         if self.hilo is None:
             return False, "La automatización está apagada."
+        if self.segundo_plano() and servicio.vivo():
+            if cy.leer_estado().get("estado") == "en_curso":
+                return False, "Ya hay un ciclo en curso."
+            servicio.pedir_ciclo()
+            return True, "Ciclo pedido al recolector en segundo plano."
         if self.proceso and self.proceso.poll() is None:
             return False, "Ya hay un ciclo en curso."
         if self.pausa_hasta and ahora() < self.pausa_hasta:
@@ -133,7 +176,13 @@ class Orquestador:
         log.debug("Hilo del orquestador iniciado")
         while not self.parar.is_set():
             try:
-                if self.proximo and ahora() >= self.proximo and not (self.pausa_hasta and ahora() < self.pausa_hasta):
+                if self.segundo_plano():
+                    # El recolector hace el trabajo; si murió (se cerró la sesión, un error), se vuelve a lanzar.
+                    if not servicio.vivo() and self.proximo and ahora() >= self.proximo:
+                        log.warning("El recolector en segundo plano no responde: se arranca de nuevo")
+                        self.lanzar_recolector()
+                        self.proximo = ahora() + dt.timedelta(minutes=3)
+                elif self.proximo and ahora() >= self.proximo and not (self.pausa_hasta and ahora() < self.pausa_hasta):
                     self._correr_ciclo()
                 else:
                     log.debug("Esperando: próximo ciclo %s, pausa hasta %s", self.proximo, self.pausa_hasta)
@@ -242,13 +291,22 @@ class Orquestador:
         conf, aj = self.ajustes()
         ciclo = cy.leer_estado()
         u = ciclo.get("ultimo_ciclo")
-        en_curso = bool(self.proceso and self.proceso.poll() is None)
+        latido = servicio.leer_latido()
+        externo = self.hilo is not None and aj.get("segundo_plano", True) and servicio.vivo(latido)
+        if externo:
+            en_curso = ciclo.get("estado") == "en_curso" and latido.get("estado") == "en_curso"
+            pausa = latido.get("pausa_hasta")
+            pausa_hasta = dt.datetime.fromisoformat(pausa) if pausa else None
+            proximo = dt.datetime.fromisoformat(latido["proximo"]) if latido.get("proximo") else None
+        else:
+            en_curso = bool(self.proceso and self.proceso.poll() is None)
+            pausa_hasta, proximo = self.pausa_hasta, self.proximo
         autorizados = [k for k, p in conf["portales"].items() if p.get("habilitado") and p.get("terminos_revisados")]
         if self.hilo is None:
             situacion = "apagado"
         elif en_curso:
             situacion = "en_curso"
-        elif self.pausa_hasta and ahora() < self.pausa_hasta:
+        elif pausa_hasta and ahora() < pausa_hasta:
             situacion = "pausado"
         elif not autorizados:
             situacion = "sin_portales"
@@ -260,8 +318,12 @@ class Orquestador:
             "detalle": ciclo.get("detalle") if en_curso else "",
             "contadores": ciclo.get("contadores") if en_curso else None,
             "ultimo_ciclo": {**u, "inicio": con_zona(u.get("inicio")), "fin": con_zona(u.get("fin"))} if u else None,
-            "proximo_ciclo": con_zona(self.proximo) if self.proximo and not en_curso else None,
-            "pausa_hasta": con_zona(self.pausa_hasta),
+            "proximo_ciclo": con_zona(proximo) if proximo and not en_curso else None,
+            "pausa_hasta": con_zona(pausa_hasta),
+            "segundo_plano": {"activo": externo, "pid": latido.get("pid") if externo else None,
+                              "desde": con_zona(latido.get("inicio")) if externo else None,
+                              "ciclos": latido.get("ciclos") if externo else None,
+                              "motivo": latido.get("motivo") if externo else None},
             "intervalo_horas": aj["intervalo_horas"],
             "dias_entre_revisiones": aj["dias_entre_revisiones"],
             "portales_autorizados": autorizados,
@@ -287,6 +349,9 @@ class Orquestador:
                 "retirados": cuenta(select(func.count()).where(t.disponible.is_(False))),
                 "cambios_precio_7_dias": cuenta(select(func.count()).where(
                     db.cambios.c.campo == "precio", db.cambios.c.fecha >= semana)),
+                # Ritmo real de las últimas 24 h: cuántos avisos nuevos por hora se están guardando
+                "nuevos_24_h": cuenta(select(func.count()).where(t.primera_vez >= ahora() - dt.timedelta(hours=24))),
+                "verificados_24_h": cuenta(select(func.count()).where(t.verificado_en >= ahora() - dt.timedelta(hours=24))),
             }
 
     def ejecuciones(self, n: int = 8) -> list[dict]:

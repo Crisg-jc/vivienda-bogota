@@ -312,7 +312,7 @@
     <section class="seccion" id="actualizacion" aria-labelledby="t-actualizacion">
       <header class="seccion__cabeza">
         <h2 class="seccion__titulo" id="t-actualizacion">Actualización de los datos</h2>
-        <p class="seccion__entrada">La aplicación recolecta, revisa y limpia los avisos sola: al abrirse y luego cada pocas horas. Cada aviso guardado se vuelve a verificar con la fuente cada pocos días (y sin abrirlo, cuando aparece en el listado con el mismo precio) para detectar cambios de precio y retiros.</p>
+        <p class="seccion__entrada">Un recolector en segundo plano alimenta la base todo el tiempo, aunque la página o la aplicación estén cerradas: mientras haya avisos por leer sigue sin parar (con pausas de cortesía con el portal), y cuando la base está al día vuelve cada pocas horas. Cada aviso guardado se vuelve a verificar con la fuente cada pocos días (y sin abrirlo, cuando aparece en el listado con el mismo precio). Las estimaciones consultan esta base ya validada, sin esperar al portal; las localidades donde faltan comparables pasan primero en la cola.</p>
       </header>
       <div class="actualizacion">
         <div class="tarjeta estado-ciclo" id="ac-estado" aria-live="polite">
@@ -321,9 +321,11 @@
           <div class="progreso" id="ac-progreso" hidden><span></span></div>
           <button class="boton" id="ac-ejecutar" type="button" hidden>Actualizar ahora</button>
           <p class="como-leer" id="ac-nota"></p>
+          <p class="segundo-plano" id="ac-segundo-plano" hidden></p>
           <p class="como-leer registros-enlaces" id="ac-registros" hidden>¿Algo no funciona? Revise el
             <a href="/api/registros?errores=true" target="_blank" rel="noopener">registro de errores</a>, el
-            <a href="/api/registros" target="_blank" rel="noopener">registro completo</a> o el
+            <a href="/api/registros" target="_blank" rel="noopener">registro completo</a>, el
+            <a href="/api/registros?recolector=true" target="_blank" rel="noopener">registro del recolector</a> o el
             <a href="/api/diagnostico?texto=1" target="_blank" rel="noopener">diagnóstico</a>. Solo se ven desde este computador.</p>
         </div>
         <dl class="cifras cifras--base" id="ac-base"></dl>

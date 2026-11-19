@@ -478,6 +478,13 @@ def api_estimar(e: Entrada):
         "diferencia_m2_pct": res["precio_m2"] / z["mediana_m2"] - 1, "p10_precio": z["p10_precio"],
         "p90_precio": z["p90_precio"]}
     res["demo"] = ESTADO["tipo"] == "demo"
+    if e.localidad and comp["confiabilidad"] in ("baja", "insuficiente"):
+        # El recolector pondrá primero en la cola los avisos de esta localidad.
+        try:
+            from scraper import ciclo as cy
+            cy.anotar_demanda(e.localidad)
+        except OSError:
+            log_api.warning("No se pudo anotar la demanda de %s", e.localidad, exc_info=True)
     if comp["viable"]:
         log_api.info("Estimación: %s m², estrato %s, %s -> $%s (rango $%s–$%s); %d comparables de %d (%s), "
                      "confiabilidad %s; modelo %s $%s; %.0fms", e.area_m2, e.estrato, e.localidad or "sin localidad",
@@ -744,10 +751,16 @@ def api_registro_cliente(lotes: list[RegistroCliente]):
 
 
 @app.get("/api/registros", include_in_schema=False, response_class=PlainTextResponse)
-def api_registros(request: Request, n: int = Query(400, ge=10, le=5000), errores: bool = False):
-    """Últimas líneas del registro, para mirarlas en el navegador. Solo desde el mismo computador."""
+def api_registros(request: Request, n: int = Query(400, ge=10, le=5000), errores: bool = False,
+                  recolector: bool = False):
+    """Últimas líneas del registro, para mirarlas en el navegador. Solo desde el mismo computador.
+    ?recolector=1 muestra el del recolector en segundo plano."""
     if not es_local(request):
         raise HTTPException(403, "Los registros solo se pueden ver desde el computador donde corre la aplicación.")
+    if recolector:
+        ruta = registro.CARPETA / ("recolector-errores.log" if errores else "recolector.log")
+        lineas = registro.ultimas_lineas(n, ruta=ruta)
+        return f"# {ruta} — últimas {len(lineas)} líneas\n\n" + ("\n".join(lineas) or "(vacío)")
     lineas = registro.ultimas_lineas(n, solo_errores=errores)
     cabecera = (f"# {registro.ERRORES if errores else registro.GENERAL} — últimas {len(lineas)} líneas\n"
                 f"# Más detalle: cierre la app y ábrala con  python -m app --depurar\n\n")

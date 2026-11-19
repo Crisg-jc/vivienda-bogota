@@ -152,6 +152,11 @@ def _fincaraiz(datos: dict) -> dict:
     d = (datos.get("props") or {}).get("pageProps", {}).get("data")
     if not isinstance(d, dict) or "bedrooms" not in d or "price" not in d:
         return {}
+    return campos_fincaraiz(d)
+
+
+def campos_fincaraiz(d: dict) -> dict:
+    """Campos de un objeto de inmueble de Finca Raíz (el del aviso o el de una tarjeta del listado)."""
     ficha = {f.get("field"): f.get("value") for f in d.get("technicalSheet") or []
              if isinstance(f, dict)}
     loc = d.get("locations") or {}
@@ -266,24 +271,25 @@ def enlaces_detalle(html: str, base: str, patron: str) -> list[str]:
     return salida
 
 
-def tarjetas_listado(html: str, base: str, patron: str) -> dict[str, str]:
-    """Precio de cada aviso tal como aparece en la página del listado: {url: precio en texto}.
+def avisos_listado(html: str, base: str, patron: str, patron_barrio_url: str | None = None) -> dict[str, dict]:
+    """Datos de cada aviso tal como vienen en la página del listado: {url: campos}.
 
-    Sirve para verificar avisos ya guardados sin abrir cada uno: si el precio del listado es el
-    mismo que el guardado, el aviso sigue publicado y sin cambio de precio. Busca en los datos JSON
-    de la página objetos que tengan a la vez un enlace a un aviso y un precio. Si el portal no
-    los trae, devuelve {} y el ciclo sigue como antes (abriendo cada aviso).
+    Una página del listado trae ~25 avisos. Si sus tarjetas incluyen precio, área, estrato,
+    habitaciones y ubicación, se guardan sin abrir cada aviso (25 veces menos visitas al portal);
+    los que traen datos incompletos quedan en la cola para completarse abriendo el aviso.
+    Busca en el JSON de la página objetos que tengan a la vez un enlace a un aviso y un precio.
+    Si el portal no los trae, devuelve {} y el ciclo sigue abriendo cada aviso.
     """
     from urllib.parse import urljoin
     soup = BeautifulSoup(html, "lxml")
     s = soup.find("script", id="__NEXT_DATA__")
     if not s or not s.string:
-        log.debug("Listado sin __NEXT_DATA__: no hay precios para verificar desde el listado")
+        log.debug("Listado sin __NEXT_DATA__: no hay datos de tarjetas")
         return {}
     try:
         datos = json.loads(s.string)
     except json.JSONDecodeError:
-        log.warning("El JSON del listado está dañado: no se verifica desde el listado")
+        log.warning("El JSON del listado está dañado: no se leen las tarjetas")
         return {}
     rx = re.compile(patron)
     salida, pila = {}, [datos]
@@ -302,14 +308,34 @@ def tarjetas_listado(html: str, base: str, patron: str) -> dict[str, str]:
                 if rx.match(candidata):
                     url = candidata
                     break
-        precio = None
-        for k, v in nodo.items():
-            if _INDICE.get(_clave(k)) == "precio":
-                precio = _escalar(v)
-                if precio:
-                    break
-        if url and precio and url not in salida:
-            salida[url] = precio
+        if url and url not in salida:
+            campos = campos_fincaraiz(nodo) if "price" in nodo and ("bedrooms" in nodo or "m2" in nodo or "m2Built" in nodo) else {}
+            if not campos.get("precio"):          # otro portal: claves genéricas del propio objeto
+                campos = {}
+                for k, v in nodo.items():
+                    campo = _INDICE.get(_clave(k))
+                    if campo and campo not in campos:
+                        valor = _escalar(v)
+                        if valor:
+                            campos[campo] = valor
+            if campos.get("precio"):
+                if "barrio" not in campos and patron_barrio_url:
+                    m = re.search(patron_barrio_url, url)
+                    if m:
+                        campos["barrio"] = m.group(1).replace("-", " ")
+                salida[url] = campos
         pila.extend(v for v in nodo.values() if isinstance(v, (dict, list)))
-    log.debug("Listado: %d tarjetas con enlace y precio", len(salida))
+    completos = sum(1 for c in salida.values() if completo(c))
+    log.debug("Listado: %d tarjetas con datos (%d completas)", len(salida), completos)
     return salida
+
+
+def completo(campos: dict) -> bool:
+    """Una tarjeta con esto ya sirve para el modelo; si falta algo, se abre el aviso para completarlo."""
+    return all(campos.get(k) for k in ("precio", "area", "estrato", "habitaciones")) and bool(
+        campos.get("localidad") or campos.get("barrio") or (campos.get("latitud") and campos.get("longitud")))
+
+
+def tarjetas_listado(html: str, base: str, patron: str) -> dict[str, str]:
+    """Precio de cada aviso del listado ({url: precio}), para verificar los ya guardados."""
+    return {u: c["precio"] for u, c in avisos_listado(html, base, patron).items()}

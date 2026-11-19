@@ -221,3 +221,77 @@ def test_listado_verifica_sin_abrir_y_detecta_precio_distinto(entorno):
     assert r["verificados_listado"] == 2
     assert visitas == ["222"], "solo se abre el aviso cuyo precio cambió en el listado"
     assert r["con_cambios"] == 1
+
+
+def tarjeta(barrio, clave, precio, area, loc, estrato=4, habitaciones=3):
+    """Tarjeta del listado con el mismo esquema de inmueble que el aviso de Finca Raíz."""
+    return {"link": f"/apartamento-en-venta-en-{barrio}-bogota/{clave}", "price": {"amount": precio}, "m2Built": area,
+            "bedrooms": habitaciones, "bathrooms": 2, "stratum": estrato, "garage": 1,
+            "locations": {"locality": [{"name": loc}]}}
+
+
+def pagina_con_tarjetas(*tarjetas):
+    datos = {"props": {"pageProps": {"results": list(tarjetas)}}}
+    enlaces_html = "".join(f'<a href="{t["link"]}">x</a>' for t in tarjetas)
+    return f'<script id="__NEXT_DATA__">{json.dumps(datos)}</script>{enlaces_html}'
+
+
+@pytest.fixture()
+def contador_visitas():
+    visitas = []
+
+    class Contador(ClienteFalso):
+        def obtener(self, url, base):
+            if "/apartamento-en-venta-en-" in url:
+                visitas.append(url.rsplit("/", 1)[1])
+            return super().obtener(url, base)
+    return Contador, visitas
+
+
+def test_tarjetas_completas_se_guardan_sin_abrir_el_aviso(entorno, contador_visitas):
+    conf, _ = entorno
+    Cliente, visitas = contador_visitas
+    incompleta = tarjeta("chico", "333", 900_000_000, 120, "Chapinero", estrato=6)
+    del incompleta["stratum"]                     # a esta le falta el estrato: se abre para completarla
+    Portal.listado = {2: pagina_con_tarjetas(tarjeta("niza", "111", 410_000_000, 68, "Suba"),
+                                             tarjeta("cedritos", "222", 530_000_000, 85, "Usaquén"), incompleta)}
+    Portal.avisos["333"] = detalle(900_000_000, 118, "Chapinero", 6)    # área distinta a la tarjeta
+    conf["automatico"]["dias_entre_revisiones"] = 30                    # sin revisiones en esta prueba
+    r = cy.ejecutar(conf, cliente_cls=Cliente, entrenar_modelo=False)
+    assert r["desde_listado"] == 3 and r["avisos_nuevos"] == 3
+    assert visitas == ["333"], "solo se abre el aviso cuya tarjeta venía incompleta"
+    with db.motor().begin() as c:
+        assert c.scalar(select(db.cambios.c.id).limit(1)) is None, "completar desde el aviso no es un cambio"
+        fila = c.execute(select(db.inmuebles_crudos).where(db.inmuebles_crudos.c.url_origen.like("%/333"))).mappings().one()
+    assert fila["estrato_txt"] == "6" and fila["metodo_extraccion"] != "listado"
+
+
+def test_con_muchos_pendientes_no_se_recorre_todo_el_listado(entorno, contador_visitas):
+    conf, _ = entorno
+    Cliente, _ = contador_visitas
+    conf["automatico"]["pendientes_para_pausar_listado"] = 0
+    with db.motor().begin() as c:
+        c.execute(db.enlaces.insert(), [{"url": f"{BASE}/apartamento-en-venta-en-x-bogota/9{i}", "portal": "fincaraiz",
+                                         "procesado": False} for i in range(3)])
+    paginas = []
+
+    class SoloListado(Cliente):
+        def get(self, url, base):
+            paginas.append(url)
+            return super().get(url, base)
+    conf["automatico"]["nuevos_por_ciclo"] = 0
+    cy.ejecutar(conf, cliente_cls=SoloListado, entrenar_modelo=False)
+    assert len(paginas) == conf["automatico"]["paginas_iniciales_siempre"], "solo las primeras páginas (lo nuevo)"
+
+
+def test_demanda_de_los_usuarios_pasa_primero(entorno, monkeypatch):
+    conf, tmp = entorno
+    monkeypatch.setattr(cy, "DEMANDA", tmp / "estado" / "demanda.json")
+    from limpieza import normalizar as nz
+    monkeypatch.setattr(nz, "_BARRIOS", {"niza": "Suba", "cedritos": "Usaquén", "chico": "Chapinero"})
+    with db.motor().begin() as c:
+        c.execute(db.enlaces.insert(), [{"url": f"{BASE}/apartamento-en-venta-en-{b}-bogota/{k}", "portal": "fincaraiz",
+                                         "procesado": False} for b, k in (("niza", 1), ("cedritos", 2), ("chico", 3))])
+    cy.anotar_demanda("Chapinero")
+    ciclo = cy.Ciclo(conf, cliente_cls=ClienteFalso)
+    assert ciclo.pendientes("fincaraiz", 3)[0].endswith("chico-bogota/3")

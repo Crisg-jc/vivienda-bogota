@@ -205,6 +205,21 @@ def revisar(con_red: bool = True) -> dict:
         inf.ok("modelo", "Estimación de prueba", f"70 m², estrato 4 -> ${r['precio']:,.0f}")
     _seguro(inf, "modelo", "Modelo", modelo)
 
+    # ---------------------------------------------------------------- recolector en segundo plano
+    def recolector():
+        from scraper import servicio
+        lat = servicio.leer_latido()
+        if servicio.vivo(lat):
+            inf.ok("recolector", "En segundo plano", f"vivo (pid {lat.get('pid')}, desde {lat.get('inicio')}, "
+                   f"{lat.get('ciclos', 0)} ciclos; ahora: {lat.get('estado')} {lat.get('motivo') or ''})")
+        elif lat:
+            inf.aviso("recolector", "En segundo plano", f"no está corriendo (último latido {lat.get('latido')})",
+                      "Se arranca solo al abrir la app; en Windows también al iniciar sesión (iniciar.bat lo configura)")
+        else:
+            inf.aviso("recolector", "En segundo plano", "nunca ha corrido en esta carpeta",
+                      "Abra la app con iniciar.bat: lo arranca y deja configurado su inicio automático")
+    _seguro(inf, "recolector", "En segundo plano", recolector)
+
     # ---------------------------------------------------------------- puerto y red
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
