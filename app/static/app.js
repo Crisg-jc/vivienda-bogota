@@ -946,6 +946,57 @@ function encuadrar(vista) {
   document.querySelectorAll(".vistas button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.vista === vista)));
 }
 
+// ---------------------------------------------------------------- historial
+const fechaDia = (iso) => new Date(iso.length <= 10 ? `${iso}T12:00:00` : iso).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" });
+
+async function mostrarHistoria(boton) {
+  const fila = boton.closest("tr");
+  const abierta = fila.nextElementSibling?.classList.contains("fila-historia");
+  if (abierta) { fila.nextElementSibling.remove(); boton.setAttribute("aria-expanded", "false"); return; }
+  boton.setAttribute("aria-expanded", "true");
+  const extra = document.createElement("tr");
+  extra.className = "fila-historia";
+  extra.innerHTML = `<td colspan="${fila.children.length}">Cargando historial…</td>`;
+  fila.after(extra);
+  try {
+    const h = await api(`/api/historia?url=${encodeURIComponent(boton.dataset.url)}`);
+    REG.debug("Historial de un aviso", h);
+    extra.firstElementChild.innerHTML = `<ol class="linea-tiempo">${h.eventos.map((e) => `<li class="ev ev--${esc(e.tipo)}">
+        <time>${e.fecha ? fechaDia(e.fecha) : "—"}</time> ${esc(e.texto || e.tipo)}</li>`).join("")}</ol>
+      <p class="como-leer">${h.dias_publicado != null ? `${h.disponible ? "Lleva" : "Estuvo"} ${fmt.format(h.dias_publicado)} días publicado (desde la ${esc(h.desde_fuente)}).` : ""}</p>`;
+  } catch (e) {
+    extra.firstElementChild.textContent = `No se pudo leer el historial: ${e.message}`;
+  }
+}
+
+function lineaTendencia(semanas) {
+  const v = semanas.filter((s) => s.suficiente);
+  const W = 320, H = 90, P = 8;
+  const min = Math.min(...v.map((s) => s.mediana_m2)), max = Math.max(...v.map((s) => s.mediana_m2));
+  const x = (i) => P + (i * (W - 2 * P)) / Math.max(1, v.length - 1);
+  const y = (m) => H - P - ((m - min) / Math.max(1, max - min)) * (H - 2 * P);
+  const puntos = v.map((s, i) => `${x(i).toFixed(1)},${y(s.mediana_m2).toFixed(1)}`).join(" ");
+  return `<svg class="tendencia__svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="m² mediano por semana, de ${m2(v[0].mediana_m2)} a ${m2(v[v.length - 1].mediana_m2)}">
+    <polyline points="${puntos}" fill="none" stroke="currentColor" stroke-width="2"/>
+    ${v.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s.mediana_m2).toFixed(1)}" r="3"><title>Semana del ${fechaDia(s.semana)}: ${m2(s.mediana_m2)} (${s.n} avisos)</title></circle>`).join("")}
+  </svg>`;
+}
+
+async function pintarTendencia(nombre) {
+  const caja = $("#z-tendencia");
+  caja.textContent = "Calculando…";
+  let t;
+  try { t = await api(`/api/tendencia?localidad=${encodeURIComponent(nombre)}`); } catch (e) { caja.textContent = `No se pudo calcular: ${e.message}`; return; }
+  if (ZONAS.seleccion !== nombre) return;
+  const c = t.cambios_30_dias || {}, r = t.retirados || {};
+  const semanasCon = t.semanas.filter((s) => s.suficiente).length;
+  caja.innerHTML = `${t.suficiente
+    ? `${lineaTendencia(t.semanas)}<p>m² mediano de los avisos que aparecieron cada semana: ${t.variacion_m2 >= 0 ? "subió" : "bajó"} ${fmt1.format(Math.abs(t.variacion_m2 * 100))} % desde la primera semana con datos.</p>`
+    : `<p>Todavía no hay tendencia: se necesitan al menos ${t.minimo_semanas} semanas con ${t.minimo_por_semana} avisos nuevos o más (hay ${semanasCon}). Aparece sola a medida que el recolector trabaja.</p>`}
+    <p>Cambios de precio en los últimos 30 días: ${c.n ? `${fmt.format(c.bajadas)} bajadas y ${fmt.format(c.subidas)} subidas (mediana ${pct(c.variacion_mediana)})` : "ninguno registrado"}.</p>
+    <p>${r.n ? `Los ${fmt.format(r.n)} avisos ya retirados duraron publicados ${fmt.format(Math.round(r.dias_mediana))} días (mediana).` : "Ningún aviso de esta zona se ha retirado todavía, así que no se sabe cuánto duran publicados."}</p>`;
+}
+
 async function seleccionarZona(nombre, { encuadrar: mover = true } = {}) {
   if (!nombre) return;
   REG.debug(`Zona elegida: ${nombre}`);
@@ -960,7 +1011,7 @@ async function seleccionarZona(nombre, { encuadrar: mover = true } = {}) {
     d = await api(`/api/zonas/${encodeURIComponent(nombre)}`);
     ZONAS.cache.set(nombre, d);
   }
-  if (ZONAS.seleccion === nombre) pintarPanelZona(d);
+  if (ZONAS.seleccion === nombre) { pintarPanelZona(d); if (d.zona.n) pintarTendencia(nombre); else $("#z-tendencia").innerHTML = ""; }
 }
 
 function pintarPanelZona(d) {
@@ -1300,8 +1351,8 @@ function pintarAvisoFuente(a) {
 
 // Marcas de la limpieza: atípico (no entra a cálculos) y proyecto nuevo.
 function marcas(a) {
-  return `${a.atipico ? ` <span class="marca marca--atipico" title="${esc(a.atipico)}. Se muestra, pero no entra al modelo, a los comparables ni a las estadísticas.">atípico</span>` : ""}${
-    a.proyecto ? ` <span class="marca" title="Proyecto nuevo o para estrenar">nuevo</span>` : ""}`;
+  return `${a.atipico ? ` <span class="etiqueta-limpieza etiqueta-limpieza--atipico" title="${esc(a.atipico)}. Se muestra, pero no entra al modelo, a los comparables ni a las estadísticas.">atípico</span>` : ""}${
+    a.proyecto ? ` <span class="etiqueta-limpieza" title="Proyecto nuevo o para estrenar">nuevo</span>` : ""}`;
 }
 
 // ---------------------------------------------------------------- avisos
@@ -1318,7 +1369,7 @@ async function cargarAvisos() {
   $("#a-filas").innerHTML = r.avisos.map((a) => `<tr>
       <td>${corto(a.precio)}${precioAnterior(a)}</td><td>${chipComparacion(a)}</td><td>${m2(a.precio_m2)}</td><td>${area(a.area_m2)}</td>
       <td>${a.habitaciones ?? "—"}</td><td>${a.banos ?? "—"}</td><td>${chipEstrato(a.estrato)}</td>
-      <td>${esc(a.localidad ?? "—")}${marcas(a)}</td><td>${esc(a.barrio ?? "—")}</td><td>${celdaFuente(a)}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
+      <td>${esc(a.localidad ?? "—")}${marcas(a)}</td><td>${esc(a.barrio ?? "—")}</td><td>${celdaFuente(a)}${a.url_origen ? `<button class="boton-texto boton-historia" type="button" data-url="${esc(a.url_origen)}" aria-expanded="false">Historial</button>` : ""}</td><td>${enlaceAviso(a.url_origen)}</td></tr>`).join("");
   $("#a-pagina").textContent = `Página ${r.pagina} de ${paginas}`;
   $("#a-limpiar").hidden = !["localidad", "estrato", "precio_max", "area_min", "comparacion"].some((k) => f.get(k));
   $("#a-anterior").disabled = r.pagina <= 1;
@@ -1326,6 +1377,10 @@ async function cargarAvisos() {
 }
 const recargarAvisos = () => seguro("Cargar avisos", cargarAvisos, avisoEnSeccion("#a-filas", "la lista de avisos"));
 $("#filtros").addEventListener("change", () => { paginaActual = 1; REG.debug("Filtros de avisos", Object.fromEntries(new FormData($("#filtros")))); recargarAvisos(); });
+$("#a-filas").addEventListener("click", (e) => {
+  const b = e.target.closest(".boton-historia");
+  if (b) mostrarHistoria(b);
+});
 $("#a-anterior").addEventListener("click", () => { paginaActual--; recargarAvisos(); });
 $("#a-siguiente").addEventListener("click", () => { paginaActual++; recargarAvisos(); });
 $("#a-limpiar").addEventListener("click", () => {

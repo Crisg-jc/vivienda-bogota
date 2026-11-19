@@ -565,9 +565,23 @@ body.modo-sin-datos .precio-flotante { display: none; }
 /* ---- más detalles, marcas de limpieza y precisión medida */
 .mas-detalles summary { cursor: pointer; font-size: var(--t-xs); color: var(--musgo); }
 .mas-detalles__campos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: .6rem; }
-.marca { display: inline-block; font-size: .7rem; font-weight: 600; padding: .05rem .4rem; border-radius: 99px;
+.etiqueta-limpieza { display: inline-block; font-size: .7rem; font-weight: 600; padding: .05rem .4rem; border-radius: 99px;
   border: 1px solid var(--borde-campo); color: var(--musgo); vertical-align: middle; }
-.marca--atipico { border-color: var(--ambar); color: #6B4B0C; background: rgba(176, 125, 30, .08); }
+.etiqueta-limpieza--atipico { border-color: var(--ambar); color: #6B4B0C; background: rgba(176, 125, 30, .08); }
 .precision { padding-bottom: clamp(2rem, 5vw, 3rem); }
 .precision h3 { margin: 1.5rem 0 .4rem; }
 .precision__zonas { margin-top: 1.2rem; } .precision__zonas summary { cursor: pointer; font-weight: 600; color: var(--paramo); }
+
+/* ---- historial */
+.boton-historia { display: block; margin-top: .2rem; font-size: var(--t-xs); }
+.fila-historia td { background: rgba(23, 50, 44, .03); }
+.linea-tiempo { list-style: none; margin: .3rem 0; padding: 0 0 0 .9rem; border-left: 2px solid var(--borde-campo); font-size: var(--t-s); }
+.linea-tiempo li { margin: .3rem 0; position: relative; }
+.linea-tiempo li::before { content: ""; position: absolute; left: -1.27rem; top: .45em; width: .55rem; height: .55rem; border-radius: 50%; background: var(--musgo); }
+.linea-tiempo .ev--precio::before { background: var(--ladrillo); }
+.linea-tiempo .ev--disponible::before { background: var(--ambar); }
+.linea-tiempo time { font-weight: 600; color: var(--paramo); margin-right: .3rem; }
+.tendencia { font-size: var(--t-s); }
+.tendencia p { margin: .3rem 0; }
+.tendencia__svg { width: 100%; max-width: 22rem; height: auto; color: var(--ladrillo); display: block; }
+.tendencia__svg circle { fill: var(--ladrillo); }

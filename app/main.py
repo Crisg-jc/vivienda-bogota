@@ -522,6 +522,34 @@ def vigentes(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df["url_origen"].isin(retirados)] if retirados else df
 
 
+@app.get("/api/historia")
+def api_historia(url: str = Query(..., max_length=500)):
+    """Línea de tiempo de un aviso: publicación, primera vez visto, cambios, retiro y verificación."""
+    from . import historial
+    h = historial.historia(motor_bd(), url)
+    if h is None:
+        raise HTTPException(404, "Ese aviso no está en la base.")
+    return h
+
+
+_TENDENCIAS: dict = {}
+
+
+@app.get("/api/tendencia")
+def api_tendencia(localidad: str | None = None):
+    """m² semana a semana, cambios de precio recientes y duración de los avisos retirados."""
+    listo()
+    if localidad and localidad not in LOCALIDADES:
+        raise HTTPException(404, "Localidad desconocida.")
+    from . import historial
+    clave = (ESTADO["huella"], localidad, TRAZA["resumen"].get("ultima_verificacion"))
+    if clave not in _TENDENCIAS:
+        if len(_TENDENCIAS) > 60:
+            _TENDENCIAS.clear()
+        _TENDENCIAS[clave] = historial.tendencia(motor_bd(), D.utiles(vigentes(ESTADO["df"])), localidad)
+    return _TENDENCIAS[clave]
+
+
 _PERFILES: dict = {}
 
 

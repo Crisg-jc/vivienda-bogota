@@ -206,3 +206,10 @@ def test_mapa_formato_esri(tmp_path, monkeypatch):
     assert geo.localidad_por_coordenadas(4.65, -74.15) == "Suba"
     assert geo.localidad_por_coordenadas(4.70, -74.10) is None     # dentro del hueco
     assert "LocNombre" in geo.estructura()
+
+
+def test_campo_vacio_de_pandas_no_se_vuelve_texto_nan():
+    """Regresión: un barrio vacío llegaba como NaN y se mostraba 'Nan'."""
+    from limpieza import normalizar as nz
+    assert nz.simple(float("nan")) == "" and nz.simple("nan") == "" and nz.simple(None) == ""
+    assert nz.localidad(float("nan")) is None

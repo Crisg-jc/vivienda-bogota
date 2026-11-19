@@ -17,7 +17,8 @@ LOCALIDADES = [
 
 
 def simple(s: str | None) -> str:
-    if s is None:
+    # pandas convierte un campo vacío en NaN (un float): sin esto se volvía el texto "nan" ("Nan" como barrio)
+    if s is None or (isinstance(s, float) and s != s) or str(s).strip().lower() in ("nan", "none", "<na>", "null"):
         return ""
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", s)).strip()
